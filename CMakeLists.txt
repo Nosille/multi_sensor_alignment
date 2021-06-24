@@ -133,6 +133,7 @@ add_definitions(${PCL_DEFINITIONS})
 generate_dynamic_reconfigure_options(
   cfg/alignment_publisher.cfg
   cfg/icp_align_tool.cfg
+  cfg/cb_align_tool.cfg
 )
 
 
@@ -172,6 +173,10 @@ add_executable(${PROJECT_NAME}_icp_align_tool_node
   src/icp_align_tool_node.cpp
 )
 
+add_executable(${PROJECT_NAME}_cb_align_tool_node
+  src/cb_align_tool_node.cpp
+)
+
 add_executable(${PROJECT_NAME}_alignment_publisher_node
   src/alignment_publisher.cpp
 )
@@ -182,6 +187,7 @@ add_executable(${PROJECT_NAME}_alignment_publisher_node
 ## e.g. "rosrun someones_pkg node" instead of "rosrun someones_pkg someones_pkg_node"
 # set_target_properties(${PROJECT_NAME}_node PROPERTIES OUTPUT_NAME node PREFIX "")
 set_target_properties(${PROJECT_NAME}_icp_align_tool_node PROPERTIES OUTPUT_NAME icp_align_tool PREFIX "")
+set_target_properties(${PROJECT_NAME}_cb_align_tool_node PROPERTIES OUTPUT_NAME cb_align_tool PREFIX "")
 set_target_properties(${PROJECT_NAME}_alignment_publisher_node PROPERTIES OUTPUT_NAME alignment_publisher PREFIX "")
 
 ## Declare a C++ library
@@ -189,6 +195,12 @@ set_target_properties(${PROJECT_NAME}_alignment_publisher_node PROPERTIES OUTPUT
 add_library(${PROJECT_NAME}_icp_align_tool_lib SHARED
   src/icp_align_tool_class.cpp
   include/icp_align_tool/icp_align_tool.h
+)
+
+add_library(${PROJECT_NAME}_cb_align_tool_lib SHARED
+  src/cb_align_tool_class.cpp
+  include/cb_align_tool/cb_align_tool.h
+  include/sensor_alignment.h
 )
 
 ## Specify libraries to link a library or executable target against
@@ -199,6 +211,13 @@ add_library(${PROJECT_NAME}_icp_align_tool_lib SHARED
 target_link_libraries(${PROJECT_NAME}_icp_align_tool_node
 ${PROJECT_NAME}_icp_align_tool_lib
   ${catkin_LIBRARIES}
+)
+
+target_link_libraries(${PROJECT_NAME}_cb_align_tool_node
+${PROJECT_NAME}_cb_align_tool_lib
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${OpenCV_LIBS}
 )
 
 target_link_libraries(${PROJECT_NAME}_alignment_publisher_node
@@ -216,6 +235,10 @@ add_dependencies(${PROJECT_NAME}_alignment_publisher_node
 )
 
 add_dependencies(${PROJECT_NAME}_icp_align_tool_lib
+  ${catkin_EXPORTED_TARGETS}
+)
+
+add_dependencies(${PROJECT_NAME}_cb_align_tool_lib
   ${catkin_EXPORTED_TARGETS}
 )
 
