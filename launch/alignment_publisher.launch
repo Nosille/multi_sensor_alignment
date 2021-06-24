@@ -1,0 +1,13 @@
+<launch>
+  <arg name="namespace"             default="sensor_alignment"/>
+  <arg name="sensor_id"             default="sensor"/>
+  <arg name="alignment_file"        default="$(find multi_sensor_alignment)/config/$(arg namespace)/$(arg sensor_id)_joint_state.yaml" />
+
+ <!-- Sensor Alignment-->
+  <node ns="$(arg namespace)/$(arg sensor_id)" name="align_publisher" pkg="multi_sensor_alignment" type="alignment_publisher" output="screen">
+    <rosparam command="load"                    file="$(arg alignment_file)"/>
+    
+    <param name="alignment_file"   type="str"   value="$(arg alignment_file)"/>
+  </node>
+
+</launch>

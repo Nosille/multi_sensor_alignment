@@ -1,0 +1,23 @@
+
+<launch>
+
+    <arg name="node_name"           default=""/>
+
+    <arg name="x"                   default="0"/>
+    <arg name="y"                   default="0"/>
+    <arg name="z"                   default="0"/>
+    <arg name="roll"                default="0"/>
+    <arg name="pitch"               default="0"/>
+    <arg name="yaw"                 default="0"/>
+
+    <include file="$(find multi_sensor_alignment)/launch/dynamic_param/set_joint_state.launch">
+        <arg name="node_name"           value="$(arg node_name)"/>
+
+         <arg name="x"                  value="$(arg x)"/>
+        <arg name="y"                   value="$(arg y)"/>
+        <arg name="z"                   value="$(arg z)"/>
+        <arg name="roll"                value="$(arg roll)"/>
+        <arg name="pitch"               value="$(arg pitch)"/>
+        <arg name="yaw"                 value="$(arg yaw)"/>
+    </include>
+</launch>

@@ -1,0 +1,96 @@
+<?xml version="1.0"?>
+<!-- This is setup to compare two lidar streams and output the transform between them -->
+<launch>
+  <arg name="namespace"                  default="sensor_alignment"/>
+  <arg name="sensor_id"                  default="sensor"/>
+
+  <arg name="fixed_frame"               default=""/>
+
+  <arg name="alignment_file"             default="$(find multi_sensor_alignment)/config/$(arg namespace)/$(arg sensor_id)_joint_state.yaml" />
+  <arg name="alignment_server"           default="/$(arg namespace)/$(arg sensor_id)/align_publisher"/>
+     
+  <arg name="output_frequency"           default="1.00" />
+  <arg name="buffer_size"                default="10" />
+       
+  <arg name="input_cloud0"               default="/lidar/vl_points_0" />
+  <arg name="input_cloud1"               default="/lidar/vl_points_1" />
+  <arg name="output_cloud0"              default="output_cloud0" />
+  <arg name="output_cloud1"              default="output_cloud1" />
+  <arg name="output"                     default="transform"/>
+  <arg name="is_output_filtered"         default="false"/>
+
+  <arg name="method"                     default="3"       doc="method: 0= ICP Nonlinear with scaling CorDist 1= ICP Nonlinear 2=Normal Distributions Transform  3= ICP with Normals"/>
+  <arg name="epsilon"                    default="0.0001"/>
+  <arg name="maxIterations"              default="1000"/>
+  <arg name="maxCorrespondenceDistance"  default="0.01"/>
+
+  <arg name="norm/KSearch"               default="20"/>
+  <arg name="norm/RadiusSearch"          default="0.5"/>
+    
+  <!-- Method 2 -->
+  <arg name="ndt/StepSize"               default="0.001"/>
+  <arg name="ndt/Resolution"             default="1"/>
+
+  <!-- Filters -->
+  <arg name="voxelSize"                  default="0"/>
+
+  <arg name="range"                      default="50"/>
+  <arg name="filter/i_min"               default="0"/> 
+  <arg name="filter/i_max"               default="100"/>
+  <arg name="filter/x_min"               default="-$(arg range)"/> 
+  <arg name="filter/x_max"               default="+$(arg range)"/> 
+  <arg name="filter/y_min"               default="-$(arg range)"/> 
+  <arg name="filter/y_max"               default="+$(arg range)"/> 
+  <arg name="filter/z_min"               default="-1"/> 
+  <arg name="filter/z_max"               default="+5"/> 
+
+  <arg name="rqt_reconfigure"            default="false"   doc="Start rqt_reconfigure"/>
+
+    
+  <node ns="$(arg namespace)/$(arg sensor_id)" name="icp_align_tool" pkg="multi_sensor_alignment" type="icp_align_tool" output="screen">
+    <rosparam command="load"                      file="$(arg alignment_file)" unless="$(eval arg('alignment_file') == '')"/>
+    
+    <param name="parent_frame"                    value="$(arg fixed_frame)" unless="$(eval arg('fixed_frame') == '')"/>
+    <param name="child_frame"                     value="$(arg fixed_frame)" unless="$(eval arg('fixed_frame') == '')"/>
+
+    <param name="alignment_server"                value="$(arg alignment_server)" if="$(eval arg('fixed_frame') == '')"/>
+
+    <param name="output_frequency"                value="$(arg output_frequency)"/>
+    <param name="buffer_size"                     value="$(arg buffer_size)"/>
+
+    <param name="input_cloud0"                    value="$(arg input_cloud0)" />
+    <param name="input_cloud1"                    value="$(arg input_cloud1)" />
+    <param name="output_cloud0"                   value="$(arg output_cloud0)" />
+    <param name="output_cloud1"                   value="$(arg output_cloud1)" />
+    <param name="output"                          value="$(arg output)" />
+    <param name="is_output_filtered"              value="$(arg is_output_filtered)" />
+
+    <param name="method"                          value="$(arg method)"/>          
+    <param name="epsilon"                         value="$(arg epsilon)"/>    
+    <param name="maxIterations"                   value="$(arg maxIterations)"/>    
+    <param name="maxCorrespondenceDistance"       value="$(arg maxCorrespondenceDistance)"/>   
+    
+    <!-- Methods 0, 1 and 3 -->
+    <param name="norm/KSearch"                    value="$(arg norm/KSearch)"/>   
+    <param name="norm/RadiusSearch"               value="$(arg norm/RadiusSearch)"/> 
+    
+    <!-- Method 2 -->
+    <param name="ndt/StepSize"                    value="$(arg ndt/StepSize)"/>   
+    <param name="ndt/Resolution"                  value="$(arg ndt/Resolution)"/>   
+
+    <!-- Filters -->
+    <param name="voxelSize"                       value="$(arg voxelSize)"/>   
+
+    <param name="filter/i_min"                    value="$(arg filter/i_min)"/>   
+    <param name="filter/i_max"                    value="$(arg filter/i_max)"/>   
+    <param name="filter/x_min"                    value="$(arg filter/x_min)"/>   
+    <param name="filter/x_max"                    value="$(arg filter/x_max)"/>   
+    <param name="filter/y_min"                    value="$(arg filter/y_min)"/>   
+    <param name="filter/y_max"                    value="$(arg filter/y_max)"/>   
+    <param name="filter/z_min"                    value="$(arg filter/z_min)"/>   
+    <param name="filter/z_max"                    value="$(arg filter/z_max)"/>   
+  </node>
+
+  <node if="$(arg rqt_reconfigure)" name="rqt_reconfigure" pkg="rqt_reconfigure" type="rqt_reconfigure"/>
+
+</launch>

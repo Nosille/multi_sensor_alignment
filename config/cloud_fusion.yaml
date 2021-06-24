@@ -1,0 +1,65 @@
+output_frequency:            10               #output frequency in Hz
+output_frame_id:             "base_link"      #Frame of output cloud topic
+fixed_frame_id:              "odom"           #Frame to which all clouds are converted before being merged.  Ideally this frame is static realative to the real world so that time differences between topics is completely corrected by tranformation to this frame using their header timestamps. 
+vehicle_frame_id:            "base_link"       # Frame of vehicle
+wait_for_tf_delay:           0.5              #How long the callbacks will wait for transform matching the topic header timestamps.
+remove_points_without_color: false            #Delete points that are not assigned a color when the color_images are fused.  This results from the lidar having a larger field of view than the camera.
+force_PointXYZRGBA:          true            #Force all input clouds to format of classic PointXYZRGB.  Necessary when input clouds have mismatched fields.  When false, all existing fields are maintained, but concatinate function may fail when it cannot match fields across all clouds.
+is_rectified:                true             #If false image callbacks will rectify image using D and K matrix in the camera_info topic
+
+omp_threads:                 0                 # Will process data in parallel using openMP when available
+
+pre_voxel_filter:            false              # Use pcl::VoxelGrid filter: VoxelGrid assembles a local 3D grid over a given PointCloud, and downsamples + filters the data.
+pre_voxel_x:                 0.1               # Voxel Grid Leaf Size x
+pre_voxel_y:                 0.1               # Voxel Grid Leaf Size y
+pre_voxel_z:                 0.1               # Voxel Grid Leaf Size z
+
+post_voxel_filter:           false              # Use pcl::VoxelGrid filter: VoxelGrid assembles a local 3D grid over a given PointCloud, and downsamples + filters the data.
+post_voxel_x:                0.1               # Voxel Grid Leaf Size x
+post_voxel_y:                0.1               # Voxel Grid Leaf Size y
+post_voxel_z:                0.1               # Voxel Grid Leaf Size z
+
+sor_filter:                  false              # Statistical Outlier Filter
+sor_meanK:                   10
+sor_stddevMulThresh:         1.0
+
+shadowpoint_filter:          false
+
+calculate_normals:           true             # Supports OpenMP: Compute the Least-Squares plane fit for a given set of points, using their indices and return the estimated plane parameters together with the surface curvature.
+kdTree_search_radius:        0.3          
+kdTree_nearestK:             0
+
+buffer_limit:                10                # Number of clouds to maintain in the transient assembler
+buffer_dist:                 0.2               # min linear movement for new buffer entry
+buffer_rotation_rate_max:    20                # max angular-rate for new buffer entry
+buffer_rotation:             1                 # min angular movement for new buffer entry
+
+in_cloud_radius:             0                 # max range (m) from sensor frame. 0 is infinite             
+out_cloud_radius:            0                 # max range (m) from sensor frame. 0 is infinite
+in_cloud_invert_radius:      false             # False: Return points inside radius, True: Return points outside radius
+out_cloud_invert_radius:     false             # False: Return points inside radius, True: Return points outside radius
+
+allowed_fields: []                             #Subset of fields must be common to all clouds merged Example: ["intensity"]
+
+cloud_in:                                      #List of cloud topics to be merged
+  [
+  "/lidar/vl_points_0",
+  "/lidar/vl_points_1",
+  "/lidar/vl_points_2",
+  #"/livox_front/points",
+  #"/livox_rear/points"
+  ]
+
+color_image:                                   #List of color image topics to be merged.  A matching color_info topic is also required for points to be colored.
+  [
+  "/vision/basler_camera_front/throttled/rgb_image_rect",
+  "/vision/basler_camera_port/throttled/rgb_image_rect",
+  "/vision/basler_camera_star/throttled/rgb_image_rect"
+  ]
+
+color_info:                                    #List of camera_info topics that go with the color_image topics above.  Both topics are required for points to be colored.
+  [
+  "/vision/basler_camera_front/throttled/camera_info",
+  "/vision/basler_camera_port/throttled/camera_info",
+  "/vision/basler_camera_star/throttled/camera_info"
+  ] 

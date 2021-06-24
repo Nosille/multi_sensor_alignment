@@ -1,0 +1,22 @@
+
+<launch>
+
+    <arg name="node_name"           default=""/>
+
+    <arg name="x"                   default=""/>
+    <arg name="y"                   default=""/>
+    <arg name="z"                   default=""/>
+    <arg name="roll"                default=""/>
+    <arg name="pitch"               default=""/>
+    <arg name="yaw"                 default=""/>
+
+    <node ns="sensor_alignment" name="$(anon dynparam)" pkg="dynamic_reconfigure" type="dynparam" args="set_from_parameters $(arg node_name)">
+
+        <param name="x"                   value="$(arg x)"                unless="$(eval arg('x') == '')"/>
+        <param name="y"                   value="$(arg y)"                unless="$(eval arg('y') == '')"/>
+        <param name="z"                   value="$(arg z)"                unless="$(eval arg('z') == '')"/>
+        <param name="roll"                value="$(arg roll)"             unless="$(eval arg('roll') == '')"/>
+        <param name="pitch"               value="$(arg pitch)"            unless="$(eval arg('pitch') == '')"/>
+        <param name="yaw"                 value="$(arg yaw)"              unless="$(eval arg('yaw') == '')"/>
+    </node>
+</launch>

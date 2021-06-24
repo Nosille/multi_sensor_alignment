@@ -1,0 +1,8 @@
+parent_frame: sensor/alignment_frame"
+child_frame:  sensor/sensor_frame"
+x:  0.01
+y:  0.02
+z:  0.03
+roll:   0.015
+pitch:  0.025
+yaw:    0.035

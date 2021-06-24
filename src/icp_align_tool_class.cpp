@@ -1,0 +1,848 @@
+
+#include "icp_align_tool/icp_align_tool.h"
+
+namespace Multi_Sensor_Alignment
+{
+  Cloud_Alignment::Cloud_Alignment(const ros::NodeHandle &node_handle, 
+                        const ros::NodeHandle &private_node_handle, int buffer_size)
+  // Initialization list
+  :nh_(node_handle),
+  pnh_(private_node_handle),
+  freeze0_(0),
+  freeze1_(0),
+  current_guess_(Eigen::Matrix4f::Identity()),
+  output_(new geometry_msgs::TransformStamped),
+  buffer_size_(buffer_size),
+  x_array_(tag::rolling_window::window_size = buffer_size),
+  y_array_(tag::rolling_window::window_size = buffer_size),
+  z_array_(tag::rolling_window::window_size = buffer_size),
+  qw_array_(tag::rolling_window::window_size = buffer_size),
+  qx_array_(tag::rolling_window::window_size = buffer_size),
+  qy_array_(tag::rolling_window::window_size = buffer_size),
+  qz_array_(tag::rolling_window::window_size = buffer_size),
+  current_qw_(0), current_qx_(0), current_qy_(0), current_qz_(0),
+  tfListener_(tfBuffer_),
+  wait_for_tf_delay_(0.1),
+  received_alignPubConfig_(false),
+  received_alignPubDesc_(false),
+  received_alignToolConfig_(false)
+  {
+    this->onInit();
+  }
+  Cloud_Alignment::~Cloud_Alignment()
+  {
+    // pass
+  }
+
+  void Cloud_Alignment::onInit()
+  {
+
+    const std::string complete_ns = pnh_.getNamespace();
+    std::size_t id = complete_ns.find_last_of("/");
+    node_name = complete_ns.substr(id + 1);
+
+  //Setup Dynamic Reconfigure Server for alignCheckConfig
+    dynamic_reconfigure::Server<multi_sensor_alignment::icp_align_toolConfig>::CallbackType
+        drServerCallback_ = boost::bind(&Cloud_Alignment::reconfigure_server_callback, this, _1, _2);
+    drServer_.reset(new dynamic_reconfigure::Server<multi_sensor_alignment::icp_align_toolConfig>(drServer_mutex_, pnh_));
+    drServer_->setCallback(drServerCallback_);
+
+    //Wait on this nodes dyanamic param server to intialize values
+    while(!received_alignToolConfig_)
+    {
+      ros::Duration(1.0).sleep();
+      ROS_INFO_STREAM_NAMED(node_name, "Waiting on dynamic parameters.");
+      ros::spinOnce();
+    }
+
+  //Subscribe to Dynamic Reconfigure on the alignment publisher node, AlignPubConfig
+    pnh_.param<std::string>("alignment_server", align_server_name_, "");
+      ROS_INFO_STREAM_NAMED(node_name, "alignment_server set to " << align_server_name_);   
+    alignClient_.reset(new dynamic_reconfigure::Client<multi_sensor_alignment::alignment_publisherConfig>(align_server_name_));
+    alignClient_->setConfigurationCallback(boost::bind(&Cloud_Alignment::align_pubconfig_callback, this, _1));
+    alignClient_->setDescriptionCallback(boost::bind(&Cloud_Alignment::align_pubdesc_callback, this, _1));
+    
+    //Wait 60 seconds for the alignment publisher nodes dynamic param server to respond
+    int count = 0, maxcount = 60;
+    while((count < maxcount && (!received_alignPubConfig_ || !received_alignPubDesc_)) && align_server_name_ != "")
+    {
+      ros::Duration(1.0).sleep();
+      ROS_INFO_STREAM_NAMED(node_name, "Waiting on dynamic parameters from align_publisher. " << (maxcount-count) << " sec before giving up.");
+      ros::spinOnce();
+      count++;
+    }
+
+  // ROS Parameters
+    pnh_.param<std::string>("parent_frame", parent_frame_id_, "");
+      ROS_INFO_STREAM_NAMED(node_name, "parent_frame set to " << parent_frame_id_);
+    pnh_.param<std::string>("child_frame", child_frame_id_, "");
+      ROS_INFO_STREAM_NAMED(node_name, "child_frame set to " << child_frame_id_);
+
+    pnh_.param("output_frequency", output_frequency_, 10.0);
+      ROS_INFO_STREAM_NAMED(node_name, "output_frequency set to " << output_frequency_);     
+          
+
+    if(received_alignPubConfig_)
+    {
+      pnh_.param("x", x_, alignPubConfig_.x);
+      pnh_.param("y", y_, alignPubConfig_.y);
+      pnh_.param("z", z_, alignPubConfig_.z);
+      pnh_.param("roll", roll_, alignPubConfig_.roll);
+      pnh_.param("pitch", pitch_, alignPubConfig_.pitch);
+      pnh_.param("yaw", yaw_, alignPubConfig_.yaw);
+    }
+    else
+    {
+      ROS_INFO_STREAM_NAMED(node_name, "Proceeding without alignment publisher using identify transform for initial guess.");
+      pnh_.param("x", x_, 0.0);
+      pnh_.param("y", y_, 0.0);
+      pnh_.param("z", z_, 0.0);
+      pnh_.param("roll", roll_, 0.0);
+      pnh_.param("pitch", pitch_, 0.0);
+      pnh_.param("yaw", yaw_, 0.0);
+    }
+
+      ROS_INFO_STREAM_NAMED(node_name, "x set to " << alignPubConfig_.x);
+      ROS_INFO_STREAM_NAMED(node_name, "y set to " << alignPubConfig_.y);
+      ROS_INFO_STREAM_NAMED(node_name, "z set to " << alignPubConfig_.z);
+      ROS_INFO_STREAM_NAMED(node_name, "roll set to " << alignPubConfig_.roll);
+      ROS_INFO_STREAM_NAMED(node_name, "pitch set to " << alignPubConfig_.pitch);
+      ROS_INFO_STREAM_NAMED(node_name, "yaw set to " << alignPubConfig_.yaw);
+
+    pnh_.param<std::string>("input_cloud0", input0_topic_, "input0");
+      ROS_INFO_STREAM_NAMED(node_name, "input_cloud0 topic set to " << input0_topic_);
+    pnh_.param<std::string>("input_cloud1", input1_topic_, "input1");
+      ROS_INFO_STREAM_NAMED(node_name, "input_cloud1 topic set to " << input1_topic_);
+    pnh_.param<std::string>("output_cloud0", output_cloud0_topic_, "cloud0");
+      ROS_INFO_STREAM_NAMED(node_name, "output_cloud0 topic set to " << output_cloud0_topic_);
+    pnh_.param<std::string>("output_cloud1", output_cloud1_topic_, "cloud1");
+      ROS_INFO_STREAM_NAMED(node_name, "output_cloud1 topic set to " << output_cloud1_topic_);
+    pnh_.param<std::string>("output", output_trans_topic_, "output");
+      ROS_INFO_STREAM_NAMED(node_name, "output topic set to " << output_trans_topic_);
+    pnh_.param("is_output_filtered", is_output_filtered_, false);
+      ROS_INFO_STREAM_NAMED(node_name, "is_output_filtered set to " << is_output_filtered_);
+      
+    pnh_.param("voxelSize", alignToolConfig_.VoxelSize, alignToolConfig_.VoxelSize);
+      ROS_INFO_STREAM_NAMED(node_name, "voxelSize set to " << alignToolConfig_.VoxelSize);
+
+    pnh_.param("filter/i_min", alignToolConfig_.i_min, alignToolConfig_.i_min);
+      ROS_INFO_STREAM_NAMED(node_name, "filter min i set to " << alignToolConfig_.i_min);   
+    pnh_.param("filter/i_max", alignToolConfig_.i_max, alignToolConfig_.i_max);
+      ROS_INFO_STREAM_NAMED(node_name, "filter max i set to " << alignToolConfig_.i_max);  
+    pnh_.param("filter/x_min", alignToolConfig_.x_min, alignToolConfig_.x_min);
+      ROS_INFO_STREAM_NAMED(node_name, "filter min x set to " << alignToolConfig_.x_min);   
+    pnh_.param("filter/x_max", alignToolConfig_.x_max, alignToolConfig_.x_max);
+      ROS_INFO_STREAM_NAMED(node_name, "filter max x set to " << alignToolConfig_.x_max);   
+    pnh_.param("filter/y_min", alignToolConfig_.y_min, alignToolConfig_.y_min);
+      ROS_INFO_STREAM_NAMED(node_name, "filter min y set to " << alignToolConfig_.y_min);   
+    pnh_.param("filter/y_max", alignToolConfig_.y_max, alignToolConfig_.y_max);
+      ROS_INFO_STREAM_NAMED(node_name, "filter max y set to " << alignToolConfig_.y_max);   
+    pnh_.param("filter/z_min", alignToolConfig_.z_min, alignToolConfig_.z_min);
+      ROS_INFO_STREAM_NAMED(node_name, "filter min z set to " << alignToolConfig_.z_min);   
+    pnh_.param("filter/z_max", alignToolConfig_.z_max, alignToolConfig_.z_max);
+      ROS_INFO_STREAM_NAMED(node_name, "filter max z set to " << alignToolConfig_.z_max);
+
+    pnh_.param("method", alignToolConfig_.Method, 1);
+      ROS_INFO_STREAM_NAMED(node_name, "method set to " << alignToolConfig_.Method);
+    pnh_.param("epsilon", alignToolConfig_.Epsilon, alignToolConfig_.Epsilon);
+      ROS_INFO_STREAM_NAMED(node_name, "epsilon set to " << alignToolConfig_.Epsilon);
+    pnh_.param("maxIterations", alignToolConfig_.MaxIterations, alignToolConfig_.MaxIterations);
+      ROS_INFO_STREAM_NAMED(node_name, "maxIterations set to " << alignToolConfig_.MaxIterations);
+    pnh_.param("maxCorrespondenceDistance", alignToolConfig_.MaxCorrespondenceDistance, alignToolConfig_.MaxCorrespondenceDistance);
+      ROS_INFO_STREAM_NAMED(node_name, "maxCorrespondenceDistance set to " << alignToolConfig_.MaxCorrespondenceDistance);
+
+    pnh_.param("norm/KSearch", alignToolConfig_.KSearch, alignToolConfig_.KSearch);
+      ROS_INFO_STREAM_NAMED(node_name, "KSearch set to " << alignToolConfig_.KSearch);
+    pnh_.param("norm/RadiusSearch", alignToolConfig_.RadiusSearch, alignToolConfig_.RadiusSearch);
+      ROS_INFO_STREAM_NAMED(node_name, "RadiusSearch set to " << alignToolConfig_.RadiusSearch);      
+    
+    pnh_.param("ndt/StepSize", alignToolConfig_.StepSize, alignToolConfig_.StepSize);
+      ROS_INFO_STREAM_NAMED(node_name, "StepSize set to " << alignToolConfig_.StepSize);     
+    pnh_.param("ndt/Resolution", alignToolConfig_.Resolution, alignToolConfig_.Resolution);
+      ROS_INFO_STREAM_NAMED(node_name, "Resolution set to " << alignToolConfig_.Resolution);   
+    
+    drServer_->updateConfig(alignToolConfig_);
+
+  // ROS publishers
+    output_trans_pub_  = nh_.advertise<geometry_msgs::TransformStamped>(output_trans_topic_,100);
+    output_cloud0_pub_ = nh_.advertise<sensor_msgs::PointCloud2>(output_cloud0_topic_,10);
+    output_cloud1_pub_ = nh_.advertise<sensor_msgs::PointCloud2>(output_cloud1_topic_,10);
+    pub_timer_ = nh_.createTimer(ros::Duration(1.0/output_frequency_), boost::bind(& Cloud_Alignment::publish_callback, this, _1));
+
+  // ROS subscribers
+    input_sub0_ = nh_.subscribe(input0_topic_, 100, &Cloud_Alignment::input0_callback, this);
+    input_sub1_ = nh_.subscribe(input1_topic_, 100, &Cloud_Alignment::input1_callback, this);
+
+  // ROS Services
+    service0_ = pnh_.advertiseService("freeze_cloud0", &Cloud_Alignment::freeze0_callback, this);
+    service1_ = pnh_.advertiseService("freeze_cloud1", &Cloud_Alignment::freeze1_callback, this);
+    service2_ = pnh_.advertiseService("unfreeze_cloud0", &Cloud_Alignment::unfreeze0_callback, this);
+    service3_ = pnh_.advertiseService("unfreeze_cloud1", &Cloud_Alignment::unfreeze1_callback, this);
+    service4_ = pnh_.advertiseService("reset", &Cloud_Alignment::reset_callback, this);
+    service5_ = pnh_.advertiseService("push_transform", &Cloud_Alignment::pushtransform_callback, this);
+
+  // Reset the guess transform for good measure
+    Cloud_Alignment::reset();
+
+    ROS_INFO_STREAM_NAMED(node_name, node_name.c_str() << " initialized!");
+  }
+
+  void Cloud_Alignment::reconfigure_server_callback(multi_sensor_alignment::icp_align_toolConfig &config, uint32_t level) 
+  {
+    
+    ROS_INFO("Reconfigure Request: %f %f %f %f %f %f %f %f %f %d %f %d %f %d %f %f %f", 
+            config.i_min,
+            config.i_max, 
+            config.x_min,
+            config.x_max, 
+            config.y_min,
+            config.y_max, 
+            config.z_min,
+            config.z_max, 
+            config.VoxelSize, 
+
+            config.Method,
+            config.Epsilon, 
+            config.MaxIterations, 
+            config.MaxCorrespondenceDistance,
+
+            config.KSearch,
+            config.RadiusSearch,
+            
+            config.StepSize,
+            config.Resolution);
+
+    alignToolConfig_ = config;
+    received_alignToolConfig_ = true;
+
+    Cloud_Alignment::reset();
+  }
+
+  void Cloud_Alignment::align_pubconfig_callback(const multi_sensor_alignment::alignment_publisherConfig& config) 
+  {
+    ROS_INFO("Received configuration from alignment publisher");
+    ROS_INFO("%f %f %f %f %f %f", 
+            config.x, config.y, config.z, config.roll, config.pitch, config.yaw);
+
+    x_     = config.x;
+    y_     = config.y;
+    z_     = config.z;
+    roll_  = config.roll;
+    pitch_ = config.pitch;
+    yaw_   = config.yaw;
+
+    alignPubConfig_ = config;
+    received_alignPubConfig_ = true;
+
+    Cloud_Alignment::reset();
+  }
+
+  void Cloud_Alignment::align_pubdesc_callback(const dynamic_reconfigure::ConfigDescription& description) 
+  {
+    ROS_INFO("Received description from alignment publisher");
+
+    alignPubDesc_ = description;
+    received_alignPubDesc_ = true;
+  }
+
+  bool Cloud_Alignment::pushTransform()
+  {
+    alignPubConfig_.x = output_->transform.translation.x;
+    alignPubConfig_.y = output_->transform.translation.y;
+    alignPubConfig_.z = output_->transform.translation.z;
+
+    tf2::Quaternion q;
+    convert(output_->transform.rotation, q);
+    tf2::Matrix3x3 m(q);
+    double roll,pitch,yaw;
+    m.getRPY(roll,pitch,yaw);
+
+    alignPubConfig_.roll = roll;
+    alignPubConfig_.pitch = pitch;
+    alignPubConfig_.yaw = yaw;
+
+    return alignClient_->setConfiguration(alignPubConfig_);
+  }
+
+  void Cloud_Alignment::publish_callback(const ros::TimerEvent& event)
+  {
+    std::cout << "---\n";
+
+    if(cloud0_.data.size() <= 0 || cloud1_.data.size() <=0) return;
+
+  // Convert from ROS msg to pointcloud2 object
+    pcl::PointCloud<PointT>::Ptr cloud0(new pcl::PointCloud<PointT>);
+    pcl::PointCloud<PointT>::Ptr cloud1(new pcl::PointCloud<PointT>);
+    pcl::fromROSMsg(cloud0_, *cloud0);
+    pcl::fromROSMsg(cloud1_, *cloud1);
+
+    std::string parent_frame = cloud0_.header.frame_id;
+    std::string child_frame  = cloud1_.header.frame_id;
+
+  //Downsample
+    pcl::PointCloud<PointT>::Ptr filtered_cloud0(new pcl::PointCloud<PointT>);
+    pcl::PointCloud<PointT>::Ptr filtered_cloud1(new pcl::PointCloud<PointT>);
+    DownsampleCloud(cloud0, *filtered_cloud0, alignToolConfig_.VoxelSize);
+    DownsampleCloud(cloud1, *filtered_cloud1, alignToolConfig_.VoxelSize);
+    
+    std::cout << "\n";
+    
+  //Perform Registration
+    Eigen::Matrix4f prev;
+    pcl::PointCloud<PointT>::Ptr output_cloud0(new pcl::PointCloud<PointT>);
+    pcl::PointCloud<PointT>::Ptr output_cloud1(new pcl::PointCloud<PointT>);
+
+    // ICP Nonlinear with scaling CorDist
+    if(alignToolConfig_.Method == 0)
+    {
+      // Compute surface normals and curvature
+      PointCloudWithNormals::Ptr points_with_normals0 (new PointCloudWithNormals);
+      PointCloudWithNormals::Ptr points_with_normals1 (new PointCloudWithNormals);
+
+      pcl::NormalEstimation<PointT, PointNormalT> norm_est;
+      pcl::search::KdTree<pcl::PointXYZI>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZI> ());
+      norm_est.setSearchMethod (tree);
+      if(alignToolConfig_.KSearch > 0) norm_est.setKSearch(alignToolConfig_.KSearch);
+      else norm_est.setRadiusSearch(alignToolConfig_.RadiusSearch);
+      
+      norm_est.setInputCloud (filtered_cloud0);
+      norm_est.compute (*points_with_normals0);
+      pcl::copyPointCloud (*filtered_cloud0, *points_with_normals0);
+
+      norm_est.setInputCloud (filtered_cloud1);
+      norm_est.compute (*points_with_normals1);
+      pcl::copyPointCloud (*filtered_cloud1, *points_with_normals1);
+
+      // Align
+      pcl::IterativeClosestPointNonLinear<PointNormalT, PointNormalT> reg;
+      reg.setTransformationEpsilon (alignToolConfig_.Epsilon);
+      // Set the maximum distance between two correspondences (cloud0<->cloud1) to user input
+      // Note: adjust this based on the size of your datasets
+      reg.setMaxCorrespondenceDistance (alignToolConfig_.MaxCorrespondenceDistance);  
+      // Set the first pointcloud as the target
+      reg.setInputTarget (points_with_normals0);
+
+      // Run the optimization in a loop and visualize the results
+      PointCloudWithNormals::Ptr reg_result = points_with_normals1;
+      reg.setMaximumIterations (2);
+      for (int i = 0; i < alignToolConfig_.MaxIterations; ++i)
+      {
+        ROS_DEBUG_STREAM_NAMED(node_name,"Iteration Nr. " << i << " maxCorrespondenceDistance=" << reg.getMaxCorrespondenceDistance () << ".\n");
+
+        // save previous cloud
+        points_with_normals1 = reg_result;
+
+        // Estimate
+        reg.setInputSource (points_with_normals1);
+        reg.align (*reg_result, current_guess_);
+      
+        //accumulate transformation between each Iteration
+        if(reg.hasConverged ())
+        {
+          current_guess_ = reg.getFinalTransformation ();
+
+        //if the difference between this transformation and the previous one
+        //is smaller than the threshold, refine the process by reducing
+        //the maximal correspondence distance
+          if (std::abs ((reg.getLastIncrementalTransformation () - prev).sum ()) < reg.getTransformationEpsilon ())
+                        reg.setMaxCorrespondenceDistance (reg.getMaxCorrespondenceDistance () * 0.99);
+        }
+        
+        prev = reg.getLastIncrementalTransformation();
+      }
+
+      std::cout << "ICP Nonlinear Transform converged:" << reg.hasConverged ()
+              << " score: " << reg.getFitnessScore () << " epsilon:" << reg.getTransformationEpsilon() << std::endl;
+
+    }
+    // ICP Nonlinear
+    else if(alignToolConfig_.Method == 1)
+    {
+      // Compute surface normals and curvature
+      PointCloudWithNormals::Ptr points_with_normals0 (new PointCloudWithNormals);
+      PointCloudWithNormals::Ptr points_with_normals1 (new PointCloudWithNormals);
+
+      pcl::NormalEstimation<PointT, PointNormalT> norm_est;
+      pcl::search::KdTree<pcl::PointXYZI>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZI> ());
+      norm_est.setSearchMethod (tree);
+      if(alignToolConfig_.KSearch > 0) norm_est.setKSearch(alignToolConfig_.KSearch);
+      else norm_est.setRadiusSearch(alignToolConfig_.RadiusSearch);
+      
+      norm_est.setInputCloud (filtered_cloud0);
+      norm_est.compute (*points_with_normals0);
+      pcl::copyPointCloud (*filtered_cloud0, *points_with_normals0);
+
+      norm_est.setInputCloud (filtered_cloud1);
+      norm_est.compute (*points_with_normals1);
+      pcl::copyPointCloud (*filtered_cloud1, *points_with_normals1);
+
+      // Align
+      pcl::IterativeClosestPointNonLinear<PointNormalT, PointNormalT> reg;
+      reg.setTransformationEpsilon (alignToolConfig_.Epsilon);
+      // Set the maximum distance between two correspondences (cloud0<->cloud1) to user input
+      // Note: adjust this based on the size of your datasets
+      reg.setMaxCorrespondenceDistance (alignToolConfig_.MaxCorrespondenceDistance);  
+      reg.setMaximumIterations(alignToolConfig_.MaxIterations);
+      // Set the first pointcloud as the target
+      reg.setInputTarget (points_with_normals0);
+      reg.setInputSource (points_with_normals1);
+
+      PointCloudWithNormals::Ptr reg_result = points_with_normals1;
+      
+      //Get Results
+      reg.align (*reg_result, current_guess_);
+
+      std::cout << "ICP Nonlinear Transform converged:" << reg.hasConverged ()
+              << " score: " << reg.getFitnessScore () << " epsilon:" << reg.getTransformationEpsilon() << std::endl;
+      
+      if(reg.hasConverged() ) current_guess_ = reg.getFinalTransformation();
+
+    }
+    // Normal Distributions Transform
+    else if(alignToolConfig_.Method == 2)
+    {
+      // Initializing Normal Distributions Transform (NDT).
+      pcl::NormalDistributionsTransform<PointT, PointT> ndt;
+
+      ndt.setTransformationEpsilon(alignToolConfig_.Epsilon);
+      ndt.setStepSize(alignToolConfig_.StepSize);
+      ndt.setResolution(alignToolConfig_.Resolution);
+      ndt.setMaximumIterations(alignToolConfig_.MaxIterations);
+
+      // Set the first pointcloud as the target
+      ndt.setInputTarget(cloud0);
+      ndt.setInputSource(filtered_cloud1);
+
+      //Get Results
+      ndt.align(*output_cloud1, current_guess_);
+      
+      std::cout << "Normal Distributions Transform converged:" << ndt.hasConverged ()
+                << " score: " << ndt.getFitnessScore () << " prob:" << ndt.getTransformationProbability() << std::endl;
+
+      if(ndt.hasConverged() ) 
+      {
+        current_guess_ = ndt.getFinalTransformation();
+      
+        Eigen::Matrix3f rotation_matrix = current_guess_.block(0,0,3,3);
+        Eigen::Vector3f translation_vector = current_guess_.block(0,3,3,1);
+        std::cout << "This transformation can be replicated using:" << std::endl;
+        std::cout << "rosrun tf static_transform_publisher " << translation_vector.transpose()
+                << " " << rotation_matrix.eulerAngles(2,1,0).transpose() << " /" << parent_frame
+                << " /" << child_frame << " 10" << std::endl;
+      }
+
+    }
+    // ICP with Normals
+    else if(alignToolConfig_.Method == 3)
+    {
+      #if (defined(PCL_VERSION) && PCL_VERSION_COMPARE(<, 1, 10, 1))
+        throw std::runtime_error("PCL must be at or above version 1.10.1 for this method=3");
+      #else
+
+        // Compute surface normals and curvature
+        PointCloudWithNormals::Ptr points_with_normals0 (new PointCloudWithNormals);
+        PointCloudWithNormals::Ptr points_with_normals1 (new PointCloudWithNormals);
+
+        pcl::NormalEstimation<PointT, PointNormalT> norm_est;
+        pcl::search::KdTree<pcl::PointXYZI>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZI> ());
+        norm_est.setSearchMethod (tree);
+        
+        if(alignToolConfig_.KSearch > 0) norm_est.setKSearch (alignToolConfig_.KSearch);
+        else norm_est.setRadiusSearch(alignToolConfig_.RadiusSearch);
+        
+        norm_est.setInputCloud (filtered_cloud0);
+        norm_est.compute (*points_with_normals0);
+        pcl::copyPointCloud (*filtered_cloud0, *points_with_normals0);
+
+        norm_est.setInputCloud (filtered_cloud1);
+        norm_est.compute (*points_with_normals1);
+        pcl::copyPointCloud (*filtered_cloud1, *points_with_normals1);
+
+        // Align
+        pcl::IterativeClosestPointWithNormals<PointNormalT, PointNormalT> reg;
+        reg.setTransformationEpsilon (alignToolConfig_.Epsilon);
+        // Set the maximum distance between two correspondences (cloud0<->cloud1) to user input
+        // Note: adjust this based on the size of your datasets
+        reg.setMaxCorrespondenceDistance (alignToolConfig_.MaxCorrespondenceDistance);  
+        reg.setMaximumIterations(alignToolConfig_.MaxIterations);
+        reg.setUseSymmetricObjective(true);
+        reg.setEnforceSameDirectionNormals(true);
+        // Set the first pointcloud as the target
+        reg.setInputTarget (points_with_normals0);
+        reg.setInputSource (points_with_normals1);
+
+        PointCloudWithNormals::Ptr reg_result = points_with_normals1;
+        
+        //Get Results
+        reg.align (*reg_result, current_guess_);
+
+        std::cout << "ICP with Normals converged:" << reg.hasConverged ()
+                << " score: " << reg.getFitnessScore () << " epsilon:" << reg.getTransformationEpsilon() << std::endl;
+        
+        if(reg.hasConverged() ) current_guess_ = reg.getFinalTransformation();
+
+
+      #endif
+    }
+    
+  //convert transformation to ros usable form
+    Eigen::Matrix4f mf = (current_guess_);
+    Eigen::Matrix4d md(mf.cast<double>());
+    Eigen::Affine3d affine(md);
+    geometry_msgs::TransformStamped transformStamped = tf2::eigenToTransform(affine);
+    output_->transform = transformStamped.transform;
+    output_->header = pcl_conversions::fromPCL(cloud1->header);
+    output_->header.frame_id = parent_frame;
+    output_->child_frame_id = child_frame;
+
+    //Add new transform to accumulator and compute average
+    if(buffer_size_ > 1)
+    {
+      x_array_(output_->transform.translation.x); double x_mean = rolling_mean(x_array_);
+      y_array_(output_->transform.translation.y); double y_mean = rolling_mean(y_array_);
+      z_array_(output_->transform.translation.z); double z_mean = rolling_mean(z_array_);
+      geometry_msgs::Quaternion q_mean = Cloud_Alignment::AverageQuaternion(output_->transform.rotation);
+
+      //Update transformations with average
+      output_->transform.translation.x = x_mean;
+      output_->transform.translation.y = y_mean;
+      output_->transform.translation.z = z_mean;
+      output_->transform.rotation = q_mean;
+
+      Eigen::Affine3d eigenTransform = tf2::transformToEigen(output_->transform);
+      current_guess_ = eigenTransform.matrix().cast<float>();
+    }
+
+  // Transforming filtered or unfiltered, input cloud using found transform.
+     if(is_output_filtered_)
+    {
+      pcl::copyPointCloud (*filtered_cloud0, *output_cloud0);
+      pcl::copyPointCloud (*filtered_cloud1, *output_cloud1);
+    }
+    else
+    {
+      pcl::copyPointCloud (*cloud0, *output_cloud0);
+      pcl::copyPointCloud (*cloud1, *output_cloud1);
+    }
+    
+    // Calculate diff from last_transform
+    tf2::Transform old_trans, new_trans;
+    tf2::convert(last_transform_, old_trans);
+    tf2::convert(output_->transform, new_trans);
+    tf2::Transform diff = old_trans.inverseTimes(new_trans);
+    
+    geometry_msgs::TransformStamped gm_diff;
+    tf2::convert(diff, gm_diff.transform);
+    gm_diff.header = pcl_conversions::fromPCL(cloud1->header);
+    gm_diff.header.frame_id = child_frame;
+    gm_diff.child_frame_id = child_frame;
+
+    tf2::Vector3 diff_vector(diff.getOrigin());
+    tf2::Matrix3x3 diff_matrix(diff.getRotation());
+    double diff_x, diff_y, diff_z, diff_roll, diff_pitch, diff_yaw;
+    diff_x = diff_vector.getX();
+    diff_y = diff_vector.getY();
+    diff_z = diff_vector.getZ();
+    diff_matrix.getRPY(diff_roll, diff_pitch, diff_yaw);
+
+    //writeout values
+    if(freeze0_) 
+    {
+      ROS_INFO_STREAM_NAMED(node_name, "input0 frozen");
+    }
+    if(freeze1_) 
+    {
+      ROS_INFO_STREAM_NAMED(node_name, "input1 frozen");
+    }
+
+    ROS_INFO_STREAM_NAMED(node_name, "X:     " << output_->transform.translation.x << " m" << ", diff: " << diff_x << " m");
+    ROS_INFO_STREAM_NAMED(node_name, "Y:     " << output_->transform.translation.y << " m" << ", diff: " << diff_y << " m");
+    ROS_INFO_STREAM_NAMED(node_name, "Z:     " << output_->transform.translation.z << " m" << ", diff: " << diff_z << " m");
+
+    tf2::Quaternion q(
+          output_->transform.rotation.x,
+          output_->transform.rotation.y,
+          output_->transform.rotation.z,
+          output_->transform.rotation.w);
+    tf2::Matrix3x3 m(q);
+    double roll,pitch,yaw;
+    m.getRPY(roll,pitch,yaw);
+    ROS_INFO_STREAM_NAMED(node_name, "Roll:  " << roll <<  " rad, " << (roll/PI*180)  << " deg" << ", diff: " << diff_roll << " rad");
+    ROS_INFO_STREAM_NAMED(node_name, "pitch: " << pitch << " rad, " << (pitch/PI*180) << " deg" << ", diff: " << diff_pitch << " rad");
+    ROS_INFO_STREAM_NAMED(node_name, "Yaw:   " << yaw <<   " rad, " << (yaw/PI*180)   << " deg" << ", diff: " << diff_yaw << " rad");
+
+    // Create output msgs
+    geometry_msgs::TransformStamped::Ptr output(output_);
+    sensor_msgs::PointCloud2::Ptr output_msg0(new sensor_msgs::PointCloud2);
+    sensor_msgs::PointCloud2::Ptr output_msg1(new sensor_msgs::PointCloud2);
+    sensor_msgs::PointCloud2 p_msg1;
+    pcl::toROSMsg(*output_cloud0, *output_msg0);
+    pcl::toROSMsg(*output_cloud1, *output_msg1);
+
+    //first convert output_msg1 to parent_frame then apply output transform
+    // geometry_msgs::TransformStamped pTransform = tfBuffer_.lookupTransform(parent_frame, output_msg1->header.frame_id, output_msg1->header.stamp);
+    // tf2::doTransform(*output_msg1, *output_msg1, pTransform);
+    // tf2::doTransform(*output_msg1, *output_msg1, *output_);
+
+    // correct error in cloud1's output msg 
+    tf2::doTransform(*output_msg1, *output_msg1, gm_diff);
+
+    output_trans_pub_.publish(output);
+    output_cloud0_pub_.publish(output_msg0);
+    output_cloud1_pub_.publish(output_msg1);
+  }
+
+  void Cloud_Alignment::input0_callback(const sensor_msgs::PointCloud2::ConstPtr& msg)
+  {
+    
+    if(freeze0_) 
+    {
+      return;
+    }
+    
+    sensor_msgs::PointCloud2 cloud_in(*msg), cloud_out;
+    geometry_msgs::TransformStamped transform;
+
+    if(parent_frame_id_ != "")
+    {
+      try{
+        transform = tfBuffer_.lookupTransform(parent_frame_id_, msg->header.frame_id, msg->header.stamp);
+        
+        tf2::doTransform(*msg, cloud_out, transform);
+
+        cloud0_ = cloud_out;
+        }
+      catch (tf2::TransformException ex){
+        ROS_WARN("%s",ex.what());
+        return;
+      }
+    }
+
+  }
+
+  void Cloud_Alignment::input1_callback(const sensor_msgs::PointCloud2::ConstPtr& msg)
+  {
+    if(freeze1_) 
+    {
+      return;
+    }
+
+    sensor_msgs::PointCloud2 cloud_in(*msg), cloud_out;
+    geometry_msgs::TransformStamped transform;
+
+     if(child_frame_id_ != "")
+    {
+      try{
+        transform = tfBuffer_.lookupTransform(child_frame_id_, msg->header.frame_id, msg->header.stamp);
+        
+        tf2::doTransform(*msg, cloud_out, transform);
+
+        cloud1_ = cloud_out;
+      }
+      catch (tf2::TransformException ex){
+        ROS_WARN("%s",ex.what());
+        return;
+      }
+    }
+
+  }
+
+  bool Cloud_Alignment::freeze0_callback(std_srvs::Empty::Request &req,
+            std_srvs::Empty::Response &resp)
+  {
+    freeze0_ = true;
+
+    return true;	  
+  }
+
+  bool Cloud_Alignment::freeze1_callback(std_srvs::Empty::Request &req,
+            std_srvs::Empty::Response &resp)
+  {
+    freeze1_ = true;	  
+    
+    return true;
+  }
+
+  bool Cloud_Alignment::unfreeze0_callback(std_srvs::Empty::Request &req,
+            std_srvs::Empty::Response &resp)
+  {
+    ROS_INFO_STREAM_NAMED(node_name, "input0 unfrozen");
+    freeze0_ = false;	  
+
+    return true;
+  }
+
+  bool Cloud_Alignment::unfreeze1_callback(std_srvs::Empty::Request &req,
+            std_srvs::Empty::Response &resp)
+  {
+    ROS_INFO_STREAM_NAMED(node_name, "input1 unfrozen");
+    freeze1_ = false;	  
+    
+    return true;
+  }
+  
+  bool Cloud_Alignment::reset()
+  {
+    //Reset Guess
+    geometry_msgs::Vector3 v;
+    v.x = x_; v.y = y_; v.z = z_;
+
+    tf2::Quaternion tf_q; geometry_msgs::Quaternion q;
+    tf_q.setRPY(roll_, pitch_, yaw_);
+    tf2::convert(tf_q, q);
+
+    last_transform_.translation = v;
+    last_transform_.rotation = q;
+    
+    Eigen::Affine3d eigenTransform = tf2::transformToEigen(last_transform_);
+    current_guess_ = eigenTransform.matrix().cast<float>();
+    
+    //Reset rolling window accumulators
+    x_array_ = window_acc(tag::rolling_window::window_size = buffer_size_);
+    y_array_ = window_acc(tag::rolling_window::window_size = buffer_size_);
+    z_array_ = window_acc(tag::rolling_window::window_size = buffer_size_);
+    qx_array_ = window_acc(tag::rolling_window::window_size = buffer_size_);
+    qy_array_ = window_acc(tag::rolling_window::window_size = buffer_size_);
+    qz_array_ = window_acc(tag::rolling_window::window_size = buffer_size_);
+    qw_array_ = window_acc(tag::rolling_window::window_size = buffer_size_);
+    current_qx_ = 0; current_qy_ = 0; current_qz_ = 0; current_qw_ = 0; 
+    
+    ROS_INFO_STREAM_NAMED(node_name, "Guess transform reset");
+
+    return true;
+  }
+
+  bool Cloud_Alignment::reset_callback(std_srvs::Empty::Request &req,
+            std_srvs::Empty::Response &resp)
+  {
+    return Cloud_Alignment::reset();
+  }
+
+  bool Cloud_Alignment::pushtransform_callback(std_srvs::Empty::Request &req,
+            std_srvs::Empty::Response &resp)
+  {
+    return Cloud_Alignment::pushTransform();
+  }
+  
+
+  void Cloud_Alignment::DownsampleCloud(const pcl::PointCloud<PointT>::Ptr in_cloud,
+                                                pcl::PointCloud<PointT> &out_cloud,
+                                                double in_leaf_size)
+
+  {
+    pcl::PointCloud<PointT>::Ptr filtered_ptr(new pcl::PointCloud<PointT>);
+  
+    // build the condition
+    pcl::ConditionAnd<PointT>::Ptr range_cond (new pcl::ConditionAnd<PointT> ());
+    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("intensity", pcl::ComparisonOps::GE, alignToolConfig_.i_min)));
+    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("intensity", pcl::ComparisonOps::LE, alignToolConfig_.i_max)));
+    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("x",         pcl::ComparisonOps::GE, alignToolConfig_.x_min)));
+    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("x",         pcl::ComparisonOps::LE, alignToolConfig_.x_max)));
+    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("y",         pcl::ComparisonOps::GE, alignToolConfig_.y_min)));
+    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("y",         pcl::ComparisonOps::LE, alignToolConfig_.y_max)));
+    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("z",         pcl::ComparisonOps::GE, alignToolConfig_.z_min)));
+    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("z",         pcl::ComparisonOps::LE, alignToolConfig_.z_max)));
+    // build the filter
+    pcl::ConditionalRemoval<PointT> condrem;
+    condrem.setCondition (range_cond);
+    condrem.setInputCloud (in_cloud);
+    condrem.setKeepOrganized(false);
+    // apply filter
+    condrem.filter (*filtered_ptr);
+
+    if(in_leaf_size > 0.001)
+    {
+      pcl::VoxelGrid<PointT> voxelized;
+      voxelized.setInputCloud(filtered_ptr);
+      voxelized.setLeafSize((float)in_leaf_size, (float)in_leaf_size, (float)in_leaf_size);
+      voxelized.filter(out_cloud);
+    }
+    else
+    {
+      pcl::copyPointCloud(*filtered_ptr, out_cloud);
+    }
+  }
+
+  geometry_msgs::Quaternion Cloud_Alignment::AverageQuaternion(const geometry_msgs::Quaternion& newRotation)
+  {
+    //ROS_INFO_STREAM_NAMED(node_name, current_qx_ << " " << current_qy_ << " " << current_qz_ << " " << current_qw_);
+    tf2::Quaternion lastRotation(current_qx_, current_qy_, current_qz_, current_qw_);
+    tf2::Quaternion currRotation; 
+    tf2::convert(newRotation, currRotation);
+    //On first pass lastRotation will be zero length
+    if(abs(lastRotation.length()) < 0.1)
+    {
+      ROS_INFO_STREAM_NAMED(node_name, "AverageQuaternion initialized");
+
+      //Add new values to accumulators
+      qx_array_(currRotation.x()); current_qx_ = currRotation.x();
+      qy_array_(currRotation.y()); current_qy_ = currRotation.y();
+      qz_array_(currRotation.z()); current_qz_ = currRotation.z();
+      qw_array_(currRotation.w()); current_qw_ = currRotation.w();
+
+      return newRotation;
+    }
+
+    //Before we add the new rotation to the average (mean), we have to check whether the quaternion has to be inverted. Because
+    //q and -q are the same rotation, but cannot be averaged, we have to make sure they are all the same.
+    // if(AreQuaternionsClose(currRotation, lastRotation))
+    // {
+    //     ROS_INFO_STREAM_NAMED(node_name, "flip quaternion");
+    //     ROS_INFO_STREAM_NAMED(node_name, currRotation.x() << " " << currRotation.y() << " " << currRotation.z() << " " << currRotation.w());
+    //     ROS_INFO_STREAM_NAMED(node_name, lastRotation.x() << " " << lastRotation.y() << " " << lastRotation.z() << " " << lastRotation.w());
+    //     currRotation = tf2::Quaternion(-currRotation.x(), -currRotation.y(), -currRotation.z(), -currRotation.w());
+    // }
+    current_qx_ = currRotation.x();
+    current_qy_ = currRotation.y();
+    current_qz_ = currRotation.z();
+    current_qw_ = currRotation.w();
+    
+    //Add new values to accumulators
+    qx_array_(currRotation.x());
+    qy_array_(currRotation.y());
+    qz_array_(currRotation.z());
+    qw_array_(currRotation.w());
+    float w = rolling_mean(qw_array_);
+    float x = rolling_mean(qx_array_);
+    float y = rolling_mean(qy_array_);
+    float z = rolling_mean(qz_array_);
+
+    //Convert back to quaternion
+    tf2::Quaternion mean(x, y, z, w);
+
+    geometry_msgs::Quaternion result;
+    tf2::convert(mean.normalize(), result);
+
+    //note: if speed is an issue, you can skip the normalization step
+    return result;
+}
+
+//Returns true if the two input quaternions are close to each other. This can
+//be used to check whether or not one of two quaternions which are supposed to
+//be very similar but has its component signs reversed (q has the same rotation as
+//-q)
+bool Cloud_Alignment::AreQuaternionsClose(tf2::Quaternion q1, tf2::Quaternion q2)
+{
+
+    float dot = q1.dot(q2);
+    
+    if(dot < 0.0f)
+    {
+
+        return false;                   
+    }
+
+    else
+    {
+
+        return true;
+    }
+}
+
+  
+}  // namespace Multi_Sensor_Alignment
+
+
+
+
+
