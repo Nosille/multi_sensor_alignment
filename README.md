@@ -1,4 +1,4 @@
-# Sensor Fusion
+# Multi Sensor Alignment
 
 `multi_sensor_alignment` is a collection of ROS tools to aid with sensor alignment for for multi-sensor setups.  A list of the various exectubles follows:
 
