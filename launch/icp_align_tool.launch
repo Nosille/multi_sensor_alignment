@@ -24,6 +24,7 @@
   <arg name="maxIterations"              default="1000"/>
   <arg name="maxCorrespondenceDistance"  default="0.01"/>
 
+  <!-- Methods 0, 1 and 3 -->
   <arg name="norm/KSearch"               default="20"/>
   <arg name="norm/RadiusSearch"          default="0.5"/>
     
