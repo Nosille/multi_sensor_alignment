@@ -1,6 +1,6 @@
 # Multi Sensor Alignment
 
-`multi_sensor_alignment` is a collection of ROS tools to aid with sensor alignment for for multi-sensor setups.  A list of the various exectubles follows:
+`multi_sensor_alignment` is a collection of ROS tools to aid with sensor alignment for multi-sensor setups.  A list of the various exectubles follows:
 
 	alignment_publisher     #Maintains a static transform between two tf2 frames while providing realtime adjustment capability through a dynamic parameter server.
 	icp_align_tool          #Subscribes to two pointcloud2 messages and provides the best fit transform for aligning them.  Can connect to a running alignment publisher for automatic realtime adjustments. 
