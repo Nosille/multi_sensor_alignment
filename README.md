@@ -74,32 +74,32 @@ Further capabilities provided through the alignment_server parameter, include au
 
 After startup, each transform solution uses the previous solution as its initial guess.  Results are written to the screen in the form of ROS_INFO_STREAM messages and published within ROS as [geometry_msgs::TransformStamped](http://docs.ros.org/en/melodic/api/geometry_msgs/html/msg/TransformStamped.html).  Output also includes an echo of the target pointcloud (cloud0) in the parent_frame and the source pointcloud (cloud1) in the same frame with the proposed transformation applied. The node includes filters to remove unwanted points from the pointcloud based on intensity or point coordinate (x/y/z in the parent/child frames) with control over the filters and most of the settings related to cloud registration available through a dynamic parameter server: 
 
-	i_min						pointcloud filter on minimum intensity
-	i_max						pointcloud filter on maximum intensity
-	x_min						pointcloud filter on minimum x coordinate in parent/child frame
-	X_max						pointcloud filter on maximum x coordinate in parent/child frame
-	y_min						pointcloud filter on minimum y coordinate in parent/child frame
-	y_max						pointcloud filter on maximum y coordinate in parent/child frame
-	z_min						pointcloud filter on minimum z coordinate in parent/child frame
-	z_max						pointcloud filter on maximum z coordinate in parent/child frame
-	VoxelSize					pointcloud voxel size used to filter pointclouds
-	Method						pointcloud registration method
-	Epsilon						epsilon, used by all registration methods
-	MaxIterations				max iterations, used by all registration methods
-	MaxCorrespondenceDistance	Max correspondence distance, used by all icp registration methods
-	KSearch						number of points used to calculate normals, used by all icp registration methods
-	RadiusSearch				radius used to calculate normals, used by all icp registration methods, only used when KSearch is 0
-	StepSize					step size, used by ndt registration method
-	Resolution					resolution, used by ndt registration method
+	filter/i_min			pointcloud filter on minimum intensity
+	filter/i_max			pointcloud filter on maximum intensity
+	filter/x_min			pointcloud filter on minimum x coordinate in parent/child frame
+	filter/x_max			pointcloud filter on maximum x coordinate in parent/child frame
+	filter/y_min			pointcloud filter on minimum y coordinate in parent/child frame
+	filter/y_max			pointcloud filter on maximum y coordinate in parent/child frame
+	filter/z_min			pointcloud filter on minimum z coordinate in parent/child frame
+	filter/z_max			pointcloud filter on maximum z coordinate in parent/child frame
+	voxelSize			pointcloud voxel size used to filter pointclouds
+	method				pointcloud registration method
+	epsilon				epsilon, used by all registration methods
+	maxIterations			max iterations, used by all registration methods
+	maxCorrespondenceDistance	max correspondence distance, used by all icp registration methods
+	norm/KSearch			number of points used to calculate normals, used by all icp registration methods
+	norm/RadiusSearch		radius used to calculate normals, used by all icp registration methods, only used when KSearch is 0
+	ndt/StepSize			step size, used by ndt registration method
+	ndt/Resolution			resolution, used by ndt registration method
 
 The node also provides a few additional services as shown below:
 
-	freeze_cloud0			Blocks update of cloud0.  The last cloud received before calling this service will continue to be used in the transformation, indefinitely.
-	freeze_cloud1			Blocks update of cloud1.  The last cloud received before calling this service will continue to be used in the transformation, indefinitely.
-	unfreeze_cloud0			Reenables cloud updates on cloud0.
-	unfreeze_cloud1			Reenables cloud updates on cloud1.
-	reset_guess				Resets buffers and reverts the initial guess used for the next registration to the initial value provided at launch (or current value in a companion alignment_publisher).
-	push_transform			Push current transform to the alignment_publisher for immediate use on the robot (requires node name for an alignment_publisher to be provided at launch).
+	freeze_cloud0		Blocks update of cloud0.  The last cloud received before calling this service will continue to be used in the transformation, indefinitely.
+	freeze_cloud1		Blocks update of cloud1.  The last cloud received before calling this service will continue to be used in the transformation, indefinitely.
+	unfreeze_cloud0		Reenables cloud updates on cloud0.
+	unfreeze_cloud1		Reenables cloud updates on cloud1.
+	reset_guess		Resets buffers and reverts the initial guess used for the next registration to the initial value provided at launch (or current value in a companion alignment_publisher).
+	push_transform		Push current transform to the alignment_publisher for immediate use on the robot (requires node name for an alignment_publisher to be provided at launch).
 
 Do not forget to use the save_joint_state service in the alignment publisher, "{namespace}/{node_name}/save_joint_state", to achieve transform persistence through a restart of the alignment publisher.
 
