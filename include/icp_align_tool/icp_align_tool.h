@@ -183,8 +183,6 @@ namespace Multi_Sensor_Alignment
 //     double filter_z_min_;
 //     double filter_z_max_;
 
-    double x_, y_, z_, roll_, pitch_, yaw_;
-
     Eigen::Matrix4f current_guess_;
     geometry_msgs::TransformStamped::Ptr output_;
     geometry_msgs::Transform last_transform_;

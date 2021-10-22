@@ -82,24 +82,9 @@ namespace Multi_Sensor_Alignment
       ROS_INFO_STREAM_NAMED(node_name, "output_frequency set to " << output_frequency_);     
           
 
-    if(received_alignPubConfig_)
+    if(!received_alignPubConfig_)
     {
-      pnh_.param("x", x_, alignPubConfig_.x);
-      pnh_.param("y", y_, alignPubConfig_.y);
-      pnh_.param("z", z_, alignPubConfig_.z);
-      pnh_.param("roll", roll_, alignPubConfig_.roll);
-      pnh_.param("pitch", pitch_, alignPubConfig_.pitch);
-      pnh_.param("yaw", yaw_, alignPubConfig_.yaw);
-    }
-    else
-    {
-      ROS_INFO_STREAM_NAMED(node_name, "Proceeding without alignment publisher using identify transform for initial guess.");
-      pnh_.param("x", x_, 0.0);
-      pnh_.param("y", y_, 0.0);
-      pnh_.param("z", z_, 0.0);
-      pnh_.param("roll", roll_, 0.0);
-      pnh_.param("pitch", pitch_, 0.0);
-      pnh_.param("yaw", yaw_, 0.0);
+      ROS_INFO_STREAM_NAMED(node_name, "Proceeding without alignment publisher.");
     }
 
       ROS_INFO_STREAM_NAMED(node_name, "x set to " << alignPubConfig_.x);
@@ -223,13 +208,6 @@ namespace Multi_Sensor_Alignment
     ROS_INFO("Received configuration from alignment publisher");
     ROS_INFO("%f %f %f %f %f %f", 
             config.x, config.y, config.z, config.roll, config.pitch, config.yaw);
-
-    x_     = config.x;
-    y_     = config.y;
-    z_     = config.z;
-    roll_  = config.roll;
-    pitch_ = config.pitch;
-    yaw_   = config.yaw;
 
     alignPubConfig_ = config;
     received_alignPubConfig_ = true;
@@ -684,15 +662,7 @@ namespace Multi_Sensor_Alignment
   bool Cloud_Alignment::reset()
   {
     //Reset Guess
-    geometry_msgs::Vector3 v;
-    v.x = x_; v.y = y_; v.z = z_;
-
-    tf2::Quaternion tf_q; geometry_msgs::Quaternion q;
-    tf_q.setRPY(roll_, pitch_, yaw_);
-    tf2::convert(tf_q, q);
-
-    last_transform_.translation = v;
-    last_transform_.rotation = q;
+    last_transform_ = tfBuffer_.lookupTransform(parent_frame_id_, child_frame_id_, ros::Time::now()).transform;
     
     Eigen::Affine3d eigenTransform = tf2::transformToEigen(last_transform_);
     current_guess_ = eigenTransform.matrix().cast<float>();
