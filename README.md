@@ -8,7 +8,7 @@
 
 ## Overview
 
-By combining the data from multiple different types of sensors, we can theoretically improve many aspects of our maps; redundancy, resolution, accuracy, range, and provide improved perception and object identification.  However, the benefits are contingent on limiting the additional errors introduced by the process of fusing the data sources. One big source of error is differences in the assumed sensor perspective used to fuse the data and the actual relative location and orientation of each sensor.  In ROS, the [tf2 package](http://wiki.ros.org/tf2) is widely used to handle transforming data from one sensor frame to another, but the results are only as good the information contained in the underlying model.  The multi_sensor_alignment package provides tools for aligning those sensors frames.
+By combining the data from multiple sensors, we can theoretically improve many aspects of our maps; redundancy, resolution, accuracy, range, and provide improved perception and object identification.  However, the benefits are contingent on limiting the additional errors introduced by the process of fusing the data sources. One big source of error is differences in the assumed sensor perspective used to fuse the data and the actual relative location and orientation of each sensor.  In ROS, the [tf2 package](http://wiki.ros.org/tf2) is widely used to handle transforming data from one sensor frame to another, but the results are only as good the information contained in the underlying model.  The multi_sensor_alignment package provides tools for aligning those sensors frames in real time.
 
 ## alignment_publisher
 
