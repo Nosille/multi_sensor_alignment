@@ -4,7 +4,7 @@
   <arg name="namespace"                  default="sensor_alignment"/>
   <arg name="sensor_id"                  default="sensor"/>
 
-  <arg name="fixed_frame"               default=""/>
+  <arg name="fixed_frame"                default=""/>
 
   <arg name="alignment_file"             default="$(find multi_sensor_alignment)/config/$(arg namespace)/$(arg sensor_id)_joint_state.yaml" />
   <arg name="alignment_server"           default="/$(arg namespace)/$(arg sensor_id)/align_publisher"/>
@@ -54,7 +54,7 @@
     <param name="parent_frame"                    value="$(arg fixed_frame)" unless="$(eval arg('fixed_frame') == '')"/>
     <param name="child_frame"                     value="$(arg fixed_frame)" unless="$(eval arg('fixed_frame') == '')"/>
 
-    <param name="alignment_server"                value="$(arg alignment_server)" if="$(eval arg('fixed_frame') == '')"/>
+    <param name="alignment_server"                value="$(arg alignment_server)"/>
 
     <param name="output_frequency"                value="$(arg output_frequency)"/>
     <param name="buffer_size"                     value="$(arg buffer_size)"/>
