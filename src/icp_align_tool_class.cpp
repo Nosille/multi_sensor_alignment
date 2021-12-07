@@ -163,8 +163,8 @@ namespace Multi_Sensor_Alignment
     service1_ = pnh_.advertiseService("freeze_cloud1", &Cloud_Alignment::freeze1_callback, this);
     service2_ = pnh_.advertiseService("unfreeze_cloud0", &Cloud_Alignment::unfreeze0_callback, this);
     service3_ = pnh_.advertiseService("unfreeze_cloud1", &Cloud_Alignment::unfreeze1_callback, this);
-    service4_ = pnh_.advertiseService("reset", &Cloud_Alignment::reset_callback, this);
-    service5_ = pnh_.advertiseService("push_transform", &Cloud_Alignment::pushtransform_callback, this);
+    service4_ = pnh_.advertiseService("revert", &Cloud_Alignment::revert_callback, this);
+    service5_ = pnh_.advertiseService("reset", &Cloud_Alignment::reset_callback, this);
 
   // Reset the guess transform for good measure
     Cloud_Alignment::reset();
@@ -209,8 +209,15 @@ namespace Multi_Sensor_Alignment
     ROS_INFO("%f %f %f %f %f %f", 
             config.x, config.y, config.z, config.roll, config.pitch, config.yaw);
 
+    if (!received_alignPubConfig_) 
+      initialAlignPubConfig_ = config;
+
     alignPubConfig_ = config;
     received_alignPubConfig_ = true;
+    
+    service6_ = pnh_.advertiseService("push_transform", &Cloud_Alignment::pushtransform_callback, this);
+    service7_ = pnh_.advertiseService("push_yaw", &Cloud_Alignment::pushYaw_callback, this);
+    service8_ = pnh_.advertiseService("push_roll_pitch_correction", &Cloud_Alignment::pushRollPitchCorrection_callback, this);
 
     Cloud_Alignment::reset();
   }
@@ -225,6 +232,13 @@ namespace Multi_Sensor_Alignment
 
   bool Cloud_Alignment::pushTransform()
   {
+    if(!received_alignPubConfig_)
+    {
+      // ROS_WARN_STREAM_NAMED(node_name, "Alignment Server isn't connected.");
+      std::cout << "Alignment Server isn't connected." << std::endl;
+      return true;
+    }
+
     alignPubConfig_.x = output_->transform.translation.x;
     alignPubConfig_.y = output_->transform.translation.y;
     alignPubConfig_.z = output_->transform.translation.z;
@@ -241,7 +255,48 @@ namespace Multi_Sensor_Alignment
 
     return alignClient_->setConfiguration(alignPubConfig_);
   }
+  
+  bool Cloud_Alignment::pushYaw()
+  {
+    if(!received_alignPubConfig_)
+    {
+      // ROS_WARN_STREAM_NAMED(node_name, "Alignment Server isn't connected.");
+      std::cout << "Alignment Server isn't connected." << std::endl;
+      return true;
+    }
 
+    tf2::Quaternion q;
+    convert(output_->transform.rotation, q);
+    tf2::Matrix3x3 m(q);
+    double roll,pitch,yaw;
+    m.getRPY(roll,pitch,yaw);
+
+    alignPubConfig_.yaw = yaw;
+
+    return alignClient_->setConfiguration(alignPubConfig_);
+  }
+  
+  bool Cloud_Alignment::pushRollPitchCorrection()
+  {
+    if(!received_alignPubConfig_)
+    {
+      // ROS_WARN_STREAM_NAMED(node_name, "Alignment Server isn't connected.");
+      std::cout << "Alignment Server isn't connected." << std::endl;
+      return true;
+    }
+
+    tf2::Quaternion q;
+    convert(output_->transform.rotation, q);
+    tf2::Matrix3x3 m(q);
+    double roll,pitch,yaw;
+    m.getRPY(roll,pitch,yaw);
+
+    alignPubConfig_.roll -= (roll / 2);
+    alignPubConfig_.pitch -= (pitch / 2);
+
+    return alignClient_->setConfiguration(alignPubConfig_);
+  }
+  
   void Cloud_Alignment::publish_callback(const ros::TimerEvent& event)
   {
     std::cout << "---\n";
@@ -658,6 +713,12 @@ namespace Multi_Sensor_Alignment
     
     return true;
   }
+
+  bool Cloud_Alignment::revert()
+  {
+    alignPubConfig_ = initialAlignPubConfig_;
+    return alignClient_->setConfiguration(alignPubConfig_);
+  }
   
   bool Cloud_Alignment::reset()
   {
@@ -682,6 +743,12 @@ namespace Multi_Sensor_Alignment
     return true;
   }
 
+  bool Cloud_Alignment::revert_callback(std_srvs::Empty::Request &req,
+            std_srvs::Empty::Response &resp)
+  {
+    return Cloud_Alignment::revert();
+  }
+
   bool Cloud_Alignment::reset_callback(std_srvs::Empty::Request &req,
             std_srvs::Empty::Response &resp)
   {
@@ -692,6 +759,18 @@ namespace Multi_Sensor_Alignment
             std_srvs::Empty::Response &resp)
   {
     return Cloud_Alignment::pushTransform();
+  }
+  
+  bool Cloud_Alignment::pushYaw_callback(std_srvs::Empty::Request &req,
+            std_srvs::Empty::Response &resp)
+  {
+    return Cloud_Alignment::pushYaw();
+  }
+  
+  bool Cloud_Alignment::pushRollPitchCorrection_callback(std_srvs::Empty::Request &req,
+            std_srvs::Empty::Response &resp)
+  {
+    return Cloud_Alignment::pushRollPitchCorrection();
   }
   
 
