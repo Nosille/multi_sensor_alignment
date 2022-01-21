@@ -108,8 +108,11 @@ namespace Multi_Sensor_Alignment
     double PI = atan(1)*4;
     
     //Methods
+    bool revert();
     bool reset();
     bool pushTransform();
+    bool pushYaw();
+    bool pushRollPitchCorrection();
 
     static bool AreQuaternionsClose(tf2::Quaternion q1, tf2::Quaternion q2);
     geometry_msgs::Quaternion AverageQuaternion(const geometry_msgs::Quaternion& newRotation);
@@ -124,9 +127,15 @@ namespace Multi_Sensor_Alignment
             std_srvs::Empty::Response &resp);
     bool unfreeze1_callback(std_srvs::Empty::Request &req,
             std_srvs::Empty::Response &resp);
+    bool revert_callback(std_srvs::Empty::Request &req,
+            std_srvs::Empty::Response &resp);
     bool reset_callback(std_srvs::Empty::Request &req,
             std_srvs::Empty::Response &resp);
     bool pushtransform_callback(std_srvs::Empty::Request &req,
+            std_srvs::Empty::Response &resp);
+    bool pushYaw_callback(std_srvs::Empty::Request &req,
+            std_srvs::Empty::Response &resp);
+    bool pushRollPitchCorrection_callback(std_srvs::Empty::Request &req,
             std_srvs::Empty::Response &resp);
     
     // ROS 
@@ -146,6 +155,7 @@ namespace Multi_Sensor_Alignment
     boost::shared_ptr<dynamic_reconfigure::Server<multi_sensor_alignment::icp_align_toolConfig> > drServer_;
     boost::shared_ptr<dynamic_reconfigure::Client<multi_sensor_alignment::alignment_publisherConfig> > alignClient_;
 
+    multi_sensor_alignment::alignment_publisherConfig initialAlignPubConfig_;
     multi_sensor_alignment::alignment_publisherConfig alignPubConfig_;
     multi_sensor_alignment::icp_align_toolConfig alignToolConfig_;
     dynamic_reconfigure::ConfigDescription alignPubDesc_;
@@ -157,7 +167,7 @@ namespace Multi_Sensor_Alignment
     std::string input0_topic_, input1_topic_;
     sensor_msgs::PointCloud2 cloud0_, cloud1_;
     ros::Subscriber input_sub0_, input_sub1_;
-    ros::ServiceServer service0_, service1_, service2_, service3_, service4_, service5_;
+    ros::ServiceServer service0_, service1_, service2_, service3_, service4_, service5_, service6_, service7_, service8_;
     bool freeze0_, freeze1_, is_output_filtered_;
 
     int buffer_size_;
