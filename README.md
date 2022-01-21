@@ -28,7 +28,7 @@ A list of all input parameters follows:
 	z						initial z displacement of transform
 	roll					initial roll of transform
 	pitch					initial pitch of transform
-	yaw						initial yaw of transform
+	yaw					initial yaw of transform
 
 The alignment_file parameter defines where the save_joint state service, "{namespace}/{node_name}/save_joint_state", will save the file when called.  Ideally, the user will load an alignment_file on node startup and save to that same file on the service call, achieving persistance between runs. See the example launch file "launch/alignment_publisher.launch" for this approach.  An example yaml file is also provided "config/sensor_alignment/sensor_joint_state".
 
