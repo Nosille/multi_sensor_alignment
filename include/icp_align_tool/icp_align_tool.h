@@ -45,6 +45,8 @@ Copyright (c) 2017
 #include <pcl_ros/transforms.h>
 
 #include <pcl/filters/filter.h>
+#include <pcl/search/kdtree.h>
+#include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/filters/conditional_removal.h>
 #include <pcl/features/normal_3d.h>
