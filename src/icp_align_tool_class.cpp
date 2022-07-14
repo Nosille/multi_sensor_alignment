@@ -41,6 +41,8 @@ namespace Multi_Sensor_Alignment
     std::size_t id = complete_ns.find_last_of("/");
     node_name = complete_ns.substr(id + 1);
 
+    tfBuffer_.setUsingDedicatedThread(true);
+
   //Setup Dynamic Reconfigure Server for alignCheckConfig
     dynamic_reconfigure::Server<multi_sensor_alignment::icp_align_toolConfig>::CallbackType
         drServerCallback_ = boost::bind(&Cloud_Alignment::reconfigure_server_callback, this, _1, _2);
@@ -73,10 +75,6 @@ namespace Multi_Sensor_Alignment
     }
 
   // ROS Parameters
-    pnh_.param<std::string>("parent_frame", parent_frame_id_, "");
-      ROS_INFO_STREAM_NAMED(node_name, "parent_frame set to " << parent_frame_id_);
-    pnh_.param<std::string>("child_frame", child_frame_id_, "");
-      ROS_INFO_STREAM_NAMED(node_name, "child_frame set to " << child_frame_id_);
 
     pnh_.param("output_frequency", output_frequency_, 10.0);
       ROS_INFO_STREAM_NAMED(node_name, "output_frequency set to " << output_frequency_);     
@@ -106,6 +104,45 @@ namespace Multi_Sensor_Alignment
       ROS_INFO_STREAM_NAMED(node_name, "output topic set to " << output_trans_topic_);
     pnh_.param("is_output_filtered", is_output_filtered_, false);
       ROS_INFO_STREAM_NAMED(node_name, "is_output_filtered set to " << is_output_filtered_);
+
+    pnh_.param<std::string>("fixed_frame", fixed_frame_id_, "");
+    pnh_.param<std::string>("base_link_frame", base_link_frame_id_, "");
+    pnh_.param<std::string>("parent_frame", parent_frame_id_, "");
+    pnh_.param<std::string>("child_frame", child_frame_id_, "");
+
+    fixed_sensor_frame_id_ = "";
+
+    if (input0_topic_ == input1_topic_) {
+      lidar_to_robot_ = true;
+
+      fixed_sensor_frame_id_ = parent_frame_id_ + "_fixed";
+      
+      initSensorFixedFrame();
+
+      if (child_frame_id_ != parent_frame_id_ && fixed_frame_id_ != ""){
+        original_parent_frame_id_ = parent_frame_id_;
+        parent_frame_id_ = fixed_sensor_frame_id_;
+        child_frame_id_ = fixed_sensor_frame_id_;
+        
+        ROS_INFO_STREAM_NAMED(node_name, "original_parent_frame set to " << original_parent_frame_id_);
+      }
+      else {
+        ROS_ERROR_STREAM_NAMED(node_name, "Set a `fixed_frame` if `input_cloud0 == input_cloud1`.");
+        exit;
+      }
+    }
+    else {
+      lidar_to_robot_ = false;
+    }
+
+    ROS_INFO_STREAM_NAMED(node_name, "Lidar to Robot Mode: " << lidar_to_robot_);
+
+    ROS_INFO_STREAM_NAMED(node_name, "fixed_frame set to " << fixed_frame_id_);
+    ROS_INFO_STREAM_NAMED(node_name, "fixed_sensor_frame set to " << fixed_sensor_frame_id_);
+    ROS_INFO_STREAM_NAMED(node_name, "base_link_frame set to " << base_link_frame_id_);
+    ROS_INFO_STREAM_NAMED(node_name, "parent_frame set to " << parent_frame_id_);
+    ROS_INFO_STREAM_NAMED(node_name, "child_frame set to " << child_frame_id_);
+
       
     pnh_.param("voxelSize", alignToolConfig_.VoxelSize, alignToolConfig_.VoxelSize);
       ROS_INFO_STREAM_NAMED(node_name, "voxelSize set to " << alignToolConfig_.VoxelSize);
@@ -163,19 +200,53 @@ namespace Multi_Sensor_Alignment
     service1_ = pnh_.advertiseService("freeze_cloud1", &Cloud_Alignment::freeze1_callback, this);
     service2_ = pnh_.advertiseService("unfreeze_cloud0", &Cloud_Alignment::unfreeze0_callback, this);
     service3_ = pnh_.advertiseService("unfreeze_cloud1", &Cloud_Alignment::unfreeze1_callback, this);
+
     if(received_alignPubConfig_)
     {
       service4_ = pnh_.advertiseService("revert", &Cloud_Alignment::revert_callback, this);
       service5_ = pnh_.advertiseService("reset", &Cloud_Alignment::reset_callback, this);
-      service6_ = pnh_.advertiseService("push_transform", &Cloud_Alignment::pushtransform_callback, this);
-      service7_ = pnh_.advertiseService("push_yaw", &Cloud_Alignment::pushYaw_callback, this);
-      service8_ = pnh_.advertiseService("push_roll_pitch_correction", &Cloud_Alignment::pushRollPitchCorrection_callback, this);
+      
+      if(lidar_to_robot_) {
+        service7_ = pnh_.advertiseService("push_yaw", &Cloud_Alignment::pushYaw_callback, this);
+        service8_ = pnh_.advertiseService("push_roll_pitch_correction", &Cloud_Alignment::pushRollPitchCorrection_callback, this);
+      } else {
+        service6_ = pnh_.advertiseService("push_transform", &Cloud_Alignment::pushtransform_callback, this);
+      }
+    } 
+    else {
+      ROS_WARN_STREAM_NAMED(node_name, "ICP_ALIGN_TOOL did not find the alignment publisher.");
     }
 
   // Reset the guess transform for good measure
     Cloud_Alignment::revert();
 
     ROS_INFO_STREAM_NAMED(node_name, node_name.c_str() << " initialized!");
+  }
+
+  void Cloud_Alignment::initSensorFixedFrame()
+  {
+    static tf2_ros::StaticTransformBroadcaster broadcaster;
+    geometry_msgs::TransformStamped baseLinkOrientationTransform;
+
+    sensorFixedFrameTransform_ = tfBuffer_.lookupTransform(fixed_frame_id_, parent_frame_id_, ros::Time(0));
+
+    sensorFixedFrameTransform_.header.frame_id = fixed_frame_id_;
+    sensorFixedFrameTransform_.child_frame_id = fixed_sensor_frame_id_;
+
+    // Clear Orientation, we only want to capture the translation
+    sensorFixedFrameTransform_.transform.rotation.x = 0;
+    sensorFixedFrameTransform_.transform.rotation.y = 0;
+    sensorFixedFrameTransform_.transform.rotation.z = 0;
+    sensorFixedFrameTransform_.transform.rotation.w = 1;
+
+    // If base_link_frame is provided, we should use it's orientation instead
+    if (base_link_frame_id_ != "") {
+      baseLinkOrientationTransform = tfBuffer_.lookupTransform(fixed_frame_id_, base_link_frame_id_, ros::Time(0));
+
+      sensorFixedFrameTransform_.transform.rotation = baseLinkOrientationTransform.transform.rotation;
+    }
+
+    broadcaster.sendTransform(sensorFixedFrameTransform_);
   }
 
   void Cloud_Alignment::reconfigure_server_callback(multi_sensor_alignment::icp_align_toolConfig &config, uint32_t level) 
@@ -258,6 +329,38 @@ namespace Multi_Sensor_Alignment
     return alignClient_->setConfiguration(alignPubConfig_);
   }
   
+  /**
+   * @brief calculateYaw
+   * ICP_y / (TF_x - ICP_x) = yawRotRAD
+   * 
+   * @return true 
+   * @return false 
+   */
+  bool Cloud_Alignment::calculateYaw()
+  {
+    geometry_msgs::TransformStamped captureMotion;
+    ros::Time stamp = stamp_;
+    
+    captureMotion = tfBuffer_.lookupTransform(fixed_sensor_frame_id_, original_parent_frame_id_, stamp);
+
+    xTF_ = captureMotion.transform.translation.x;
+    yTF_ = captureMotion.transform.translation.y;
+    zTF_ = captureMotion.transform.translation.z;
+
+    double yICP = output_->transform.translation.y;
+    double xICP = output_->transform.translation.x;
+
+    current_yaw_ = (yTF_ - yICP) / (xTF_ - xICP);
+
+    return true;
+  }
+
+  /**
+   * @brief pushYaw
+   * 
+   * @return true 
+   * @return false 
+   */
   bool Cloud_Alignment::pushYaw()
   {
     if(!received_alignPubConfig_)
@@ -266,16 +369,23 @@ namespace Multi_Sensor_Alignment
       std::cout << "Alignment Server isn't connected." << std::endl;
       return true;
     }
+    
+    alignPubConfig_.yaw = current_yaw_;
 
+    return alignClient_->setConfiguration(alignPubConfig_);
+  }
+
+  bool Cloud_Alignment::calculateRollPitchCorrection() {
     tf2::Quaternion q;
     convert(output_->transform.rotation, q);
     tf2::Matrix3x3 m(q);
     double roll,pitch,yaw;
     m.getRPY(roll,pitch,yaw);
 
-    alignPubConfig_.yaw = yaw;
+    current_roll_  = alignPubConfig_.roll - (roll / 2);
+    current_pitch_ = alignPubConfig_.pitch - (pitch / 2);
 
-    return alignClient_->setConfiguration(alignPubConfig_);
+    return true;
   }
   
   bool Cloud_Alignment::pushRollPitchCorrection()
@@ -287,14 +397,8 @@ namespace Multi_Sensor_Alignment
       return true;
     }
 
-    tf2::Quaternion q;
-    convert(output_->transform.rotation, q);
-    tf2::Matrix3x3 m(q);
-    double roll,pitch,yaw;
-    m.getRPY(roll,pitch,yaw);
-
-    alignPubConfig_.roll -= (roll / 2);
-    alignPubConfig_.pitch -= (pitch / 2);
+    alignPubConfig_.roll  = current_roll_;
+    alignPubConfig_.pitch = current_pitch_;
 
     return alignClient_->setConfiguration(alignPubConfig_);
   }
@@ -548,8 +652,8 @@ namespace Multi_Sensor_Alignment
       current_guess_ = eigenTransform.matrix().cast<float>();
     }
 
-  // Transforming filtered or unfiltered, input cloud using found transform.
-     if(is_output_filtered_)
+    // Transforming filtered or unfiltered, input cloud using found transform.
+    if(is_output_filtered_)
     {
       pcl::copyPointCloud (*filtered_cloud0, *output_cloud0);
       pcl::copyPointCloud (*filtered_cloud1, *output_cloud1);
@@ -590,18 +694,39 @@ namespace Multi_Sensor_Alignment
       ROS_INFO_STREAM_NAMED(node_name, "input1 frozen");
     }
 
-    ROS_INFO_STREAM_NAMED(node_name, "X:     " << output_->transform.translation.x << " m" << ", diff: " << diff_x << " m");
-    ROS_INFO_STREAM_NAMED(node_name, "Y:     " << output_->transform.translation.y << " m" << ", diff: " << diff_y << " m");
-    ROS_INFO_STREAM_NAMED(node_name, "Z:     " << output_->transform.translation.z << " m" << ", diff: " << diff_z << " m");
-
-    tf2::Quaternion q(
-          output_->transform.rotation.x,
-          output_->transform.rotation.y,
-          output_->transform.rotation.z,
-          output_->transform.rotation.w);
-    tf2::Matrix3x3 m(q);
     double roll,pitch,yaw;
-    m.getRPY(roll,pitch,yaw);
+
+    if (!lidar_to_robot_) {
+      tf2::Quaternion q(
+            output_->transform.rotation.x,
+            output_->transform.rotation.y,
+            output_->transform.rotation.z,
+            output_->transform.rotation.w);
+      tf2::Matrix3x3 m(q);
+      m.getRPY(roll,pitch,yaw);
+    }
+    else 
+    {
+      calculateYaw();
+      calculateRollPitchCorrection();
+
+      ROS_INFO_STREAM_NAMED(node_name, "TF Translation  X: " << xTF_ << " m");
+      ROS_INFO_STREAM_NAMED(node_name, "TF Translation  Y: " << yTF_ << " m");
+      ROS_INFO_STREAM_NAMED(node_name, "TF Translation  Z: " << zTF_ << " m");
+    
+      roll  = current_roll_;
+      pitch = current_pitch_;
+      yaw   = current_yaw_;
+
+      diff_roll  = alignPubConfig_.roll - roll;
+      diff_pitch = alignPubConfig_.pitch - pitch;
+      diff_yaw   = alignPubConfig_.yaw - yaw;
+    }
+
+    ROS_INFO_STREAM_NAMED(node_name, "ICP Translation X: " << output_->transform.translation.x << " m" << ", diff: " << diff_x << " m");
+    ROS_INFO_STREAM_NAMED(node_name, "ICP Translation Y: " << output_->transform.translation.y << " m" << ", diff: " << diff_y << " m");
+    ROS_INFO_STREAM_NAMED(node_name, "ICP Translation Z: " << output_->transform.translation.z << " m" << ", diff: " << diff_z << " m");
+
     ROS_INFO_STREAM_NAMED(node_name, "Roll:  " << roll <<  " rad, " << (roll/PI*180)  << " deg" << ", diff: " << diff_roll << " rad");
     ROS_INFO_STREAM_NAMED(node_name, "pitch: " << pitch << " rad, " << (pitch/PI*180) << " deg" << ", diff: " << diff_pitch << " rad");
     ROS_INFO_STREAM_NAMED(node_name, "Yaw:   " << yaw <<   " rad, " << (yaw/PI*180)   << " deg" << ", diff: " << diff_yaw << " rad");
@@ -646,7 +771,12 @@ namespace Multi_Sensor_Alignment
         tf2::doTransform(*msg, cloud_out, transform);
 
         cloud0_ = cloud_out;
+        
+        if(freeze1_) 
+        {
+          cloud0_.header = cloud1_.header;
         }
+      }
       catch (tf2::TransformException ex){
         ROS_WARN("%s",ex.what());
         return;
@@ -657,6 +787,8 @@ namespace Multi_Sensor_Alignment
 
   void Cloud_Alignment::input1_callback(const sensor_msgs::PointCloud2::ConstPtr& msg)
   {
+    stamp_ = msg->header.stamp;
+
     if(freeze1_) 
     {
       return;
@@ -673,6 +805,11 @@ namespace Multi_Sensor_Alignment
         tf2::doTransform(*msg, cloud_out, transform);
 
         cloud1_ = cloud_out;
+
+        if(freeze0_) 
+        {
+          cloud1_.header = cloud0_.header;
+        }
       }
       catch (tf2::TransformException ex){
         ROS_WARN("%s",ex.what());

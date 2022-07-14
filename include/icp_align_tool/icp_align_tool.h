@@ -19,6 +19,8 @@ Copyright (c) 2017
 #include <ros/console.h>
 #include <std_srvs/Empty.h>
 #include <tf2_ros/transform_listener.h>
+#include <tf2_ros/static_transform_broadcaster.h>
+// #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_sensor_msgs/tf2_sensor_msgs.h>
 #include <tf2_eigen/tf2_eigen.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
@@ -99,8 +101,12 @@ namespace Multi_Sensor_Alignment
     void input0_callback(const sensor_msgs::PointCloud2::ConstPtr& msg);
     void input1_callback(const sensor_msgs::PointCloud2::ConstPtr& msg);
     
+    void initSensorFixedFrame();
+
     //publisher
     void publish_callback(const ros::TimerEvent& event);
+    
+    ros::Timer pub_sensor_fixed_frame_timer_;
 
     std::string node_name{"cloud_alignment"};
 
@@ -111,7 +117,9 @@ namespace Multi_Sensor_Alignment
     bool revert();
     bool reset();
     bool pushTransform();
+    bool calculateYaw();
     bool pushYaw();
+    bool calculateRollPitchCorrection();
     bool pushRollPitchCorrection();
 
     static bool AreQuaternionsClose(tf2::Quaternion q1, tf2::Quaternion q2);
@@ -142,12 +150,15 @@ namespace Multi_Sensor_Alignment
     ros::NodeHandle nh_;
     ros::NodeHandle pnh_;
 
-    std::string parent_frame_id_, child_frame_id_;
+    bool lidar_to_robot_;
+
+    std::string parent_frame_id_, child_frame_id_, fixed_frame_id_, base_link_frame_id_, fixed_sensor_frame_id_, original_parent_frame_id_;
     std::string output_trans_topic_;
     std::string output_cloud0_topic_, output_cloud1_topic_;
     std::string align_server_name_;
     ros::Publisher output_trans_pub_,  output_cloud0_pub_, output_cloud1_pub_;
 
+    geometry_msgs::TransformStamped sensorFixedFrameTransform_;
     tf2_ros::TransformListener tfListener_;
     tf2_ros::Buffer tfBuffer_;
     float wait_for_tf_delay_;
@@ -169,6 +180,8 @@ namespace Multi_Sensor_Alignment
     ros::Subscriber input_sub0_, input_sub1_;
     ros::ServiceServer service0_, service1_, service2_, service3_, service4_, service5_, service6_, service7_, service8_;
     bool freeze0_, freeze1_, is_output_filtered_;
+
+    ros::Time stamp_;
 
     int buffer_size_;
 
@@ -204,6 +217,9 @@ namespace Multi_Sensor_Alignment
     window_acc qy_array_;
     window_acc qz_array_;
     double current_qw_, current_qx_, current_qy_, current_qz_;
+
+    double current_yaw_, current_pitch_, current_roll_;
+    double xTF_, yTF_, zTF_;
 
     std::recursive_mutex cloud0_mutex_;
     std::recursive_mutex cloud1_mutex_;
