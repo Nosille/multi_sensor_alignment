@@ -2,29 +2,51 @@
 <!-- This is setup to compare two lidar streams and output the transform between them -->
 <launch>
   <arg name="namespace"                  default="sensor_alignment"/>
-  <arg name="sensor_id"                  default="sensor"/>
+  <arg name="lidar_ns"                   default="lidar"/>
+  
+  <arg name="lidar_index"                             doc="Int: Lidar to be aligned"/>
+  <arg name="lidar_index_main"           default="0"  doc="Int: Reference Lidar"/>
 
-  <arg name="fixed_frame"                default=""/>
+  <arg name="lidar_to_robot"             default="$(eval arg('lidar_index') == arg('lidar_index_main'))"/>
 
-  <arg name="alignment_file"             default="$(find multi_sensor_alignment)/config/$(arg namespace)/$(arg sensor_id)_joint_state.yaml" />
-  <arg name="alignment_server"           default="/$(arg namespace)/$(arg sensor_id)/align_publisher"/>
+  <arg name="sensor_id"                  default="lidar_$(arg lidar_index)"/>
+
+  <arg name="vehicle_config_path"        default="$(find erdc_vehicle)/vehicle"/>
+  
+  <arg name="env_name_short"             value="vehicle_lidar_$(arg lidar_index)_name_short"/>
+  <arg name="name_short"                 default="$(eval optenv(env_name_short))"/>
+
+  <arg name="env_type_index"             value="vehicle_lidar_$(arg lidar_index)_type"/>
+  <arg name="lidar_type"                 default="$(eval optenv(env_type_index))"/>
+
+  <arg name="name_long"                  default="$(arg lidar_type)_lidar_$(arg name_short)" />
+
      
+  <arg name="alignment_file"             default="$(arg vehicle_config_path)/config/sensor_alignment/$(arg name_long)_joint_state.yaml" />
+  <arg name="alignment_server"           default="/$(arg namespace)/$(arg sensor_id)/align_publisher"/>
+  
   <arg name="output_frequency"           default="1.00" />
-  <arg name="buffer_size"                default="10" />
-       
-  <arg name="input_cloud0"               default="/lidar/vl_points_0" />
-  <arg name="input_cloud1"               default="/lidar/vl_points_1" />
+  <arg name="buffer_size"                default="1" />
+
+  <arg name="input_cloud0"               default="/$(arg lidar_ns)/cloud$(arg lidar_index_main)/points" />
+  <arg name="input_cloud1"               default="/$(arg lidar_ns)/cloud$(arg lidar_index)/points" />
   <arg name="output_cloud0"              default="output_cloud0" />
   <arg name="output_cloud1"              default="output_cloud1" />
+  
   <arg name="output"                     default="transform"/>
-  <arg name="is_output_filtered"         default="false"/>
+  
+  <arg name="fixed_frame"                default="odom"/>
+  <arg name="base_link_frame"            default="base_link"/>
 
-  <arg name="method"                     default="3"       doc="method: 0= ICP Nonlinear with scaling CorDist 1= ICP Nonlinear 2=Normal Distributions Transform  3= ICP with Normals"/>
+  <arg name="is_output_filtered"         default="true"/>
+
+  <arg name="method"                     default="3" doc="0=ICP Nonlinear with scaling CorDist, 1=ICP Nonlinear, 2=Normal Distributions Transform, 3=ICP with Normals"/>
   <arg name="epsilon"                    default="0.0001"/>
   <arg name="maxIterations"              default="1000"/>
-  <arg name="maxCorrespondenceDistance"  default="0.01"/>
 
-  <!-- Methods 0, 1 and 3 -->
+  <arg name="maxCorrespondenceDistance"  default="0.2"    if    ="$(arg lidar_to_robot)"/>
+  <arg name="maxCorrespondenceDistance"  default="0.01"   unless="$(arg lidar_to_robot)"/>
+
   <arg name="norm/KSearch"               default="20"/>
   <arg name="norm/RadiusSearch"          default="0.5"/>
     
@@ -35,26 +57,25 @@
   <!-- Filters -->
   <arg name="voxelSize"                  default="0"/>
 
-  <arg name="range"                      default="50"/>
-  <arg name="filter/i_min"               default="0"/> 
+  <arg name="range"                      default="20"/>
+  <arg name="filter/i_min"               default="0.00"/> 
   <arg name="filter/i_max"               default="100"/>
   <arg name="filter/x_min"               default="-$(arg range)"/> 
   <arg name="filter/x_max"               default="+$(arg range)"/> 
   <arg name="filter/y_min"               default="-$(arg range)"/> 
   <arg name="filter/y_max"               default="+$(arg range)"/> 
-  <arg name="filter/z_min"               default="-1"/> 
+  <arg name="filter/z_min"               default="-5"/> 
   <arg name="filter/z_max"               default="+5"/> 
 
-  <arg name="rqt_reconfigure"            default="false"   doc="Start rqt_reconfigure"/>
+  <arg name="rqt_reconfigure"            default="true"/>
 
-    
-  <node ns="$(arg namespace)/$(arg sensor_id)" name="icp_align_tool" pkg="multi_sensor_alignment" type="icp_align_tool" output="screen">
+  <node ns="$(arg namespace)/lidar_$(arg lidar_index)" name="icp_align_tool" pkg="multi_sensor_alignment" type="icp_align_tool" output="screen">
     <rosparam command="load"                      file="$(arg alignment_file)" unless="$(eval arg('alignment_file') == '')"/>
     
-    <param name="parent_frame"                    value="$(arg fixed_frame)" unless="$(eval arg('fixed_frame') == '')"/>
-    <param name="child_frame"                     value="$(arg fixed_frame)" unless="$(eval arg('fixed_frame') == '')"/>
+    <param name="fixed_frame"                     value="$(arg fixed_frame)"/>
+    <param name="base_link_frame"                 value="$(arg base_link_frame)"/>
 
-    <param name="alignment_server"                value="$(arg alignment_server)" if="$(eval arg('fixed_frame') == '')"/>
+    <param name="alignment_server"                value="$(arg alignment_server)"/>
 
     <param name="output_frequency"                value="$(arg output_frequency)"/>
     <param name="buffer_size"                     value="$(arg buffer_size)"/>
@@ -93,5 +114,6 @@
   </node>
 
   <node if="$(arg rqt_reconfigure)" name="rqt_reconfigure" pkg="rqt_reconfigure" type="rqt_reconfigure"/>
+
 
 </launch>
