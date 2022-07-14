@@ -308,7 +308,7 @@ namespace Multi_Sensor_Alignment
     if(!received_alignPubConfig_)
     {
       // ROS_WARN_STREAM_NAMED(node_name, "Alignment Server isn't connected.");
-      std::cout << "Alignment Server isn't connected." << std::endl;
+      ROS_INFO_STREAM_NAMED(node_name, "Alignment Server isn't connected.");
       return true;
     }
 
@@ -366,7 +366,7 @@ namespace Multi_Sensor_Alignment
     if(!received_alignPubConfig_)
     {
       // ROS_WARN_STREAM_NAMED(node_name, "Alignment Server isn't connected.");
-      std::cout << "Alignment Server isn't connected." << std::endl;
+      ROS_INFO_STREAM_NAMED(node_name, "Alignment Server isn't connected.");
       return true;
     }
     
@@ -393,7 +393,7 @@ namespace Multi_Sensor_Alignment
     if(!received_alignPubConfig_)
     {
       // ROS_WARN_STREAM_NAMED(node_name, "Alignment Server isn't connected.");
-      std::cout << "Alignment Server isn't connected." << std::endl;
+      ROS_INFO_STREAM_NAMED(node_name, "Alignment Server isn't connected.");
       return true;
     }
 
@@ -405,7 +405,7 @@ namespace Multi_Sensor_Alignment
   
   void Cloud_Alignment::publish_callback(const ros::TimerEvent& event)
   {
-    std::cout << "---\n";
+    ROS_INFO_STREAM_NAMED(node_name, "---");
 
     if(cloud0_.data.size() <= 0 || cloud1_.data.size() <=0) return;
 
@@ -424,7 +424,7 @@ namespace Multi_Sensor_Alignment
     DownsampleCloud(cloud0, *filtered_cloud0, alignToolConfig_.VoxelSize);
     DownsampleCloud(cloud1, *filtered_cloud1, alignToolConfig_.VoxelSize);
     
-    std::cout << "\n";
+    ROS_INFO_STREAM_NAMED(node_name, "\n");
     
   //Perform Registration
     Eigen::Matrix4f prev;
@@ -490,8 +490,8 @@ namespace Multi_Sensor_Alignment
         prev = reg.getLastIncrementalTransformation();
       }
 
-      std::cout << "ICP Nonlinear Transform converged:" << reg.hasConverged ()
-              << " score: " << reg.getFitnessScore () << " epsilon:" << reg.getTransformationEpsilon() << std::endl;
+      ROS_INFO_STREAM_NAMED(node_name, "ICP Nonlinear Transform converged:" << reg.hasConverged ()
+              << " score: " << reg.getFitnessScore () << " epsilon:" << reg.getTransformationEpsilon());
 
     }
     // ICP Nonlinear
@@ -531,8 +531,8 @@ namespace Multi_Sensor_Alignment
       //Get Results
       reg.align (*reg_result, current_guess_);
 
-      std::cout << "ICP Nonlinear Transform converged:" << reg.hasConverged ()
-              << " score: " << reg.getFitnessScore () << " epsilon:" << reg.getTransformationEpsilon() << std::endl;
+      ROS_INFO_STREAM_NAMED(node_name, "ICP Nonlinear Transform converged:" << reg.hasConverged ()
+              << " score: " << reg.getFitnessScore () << " epsilon:" << reg.getTransformationEpsilon());
       
       if(reg.hasConverged() ) current_guess_ = reg.getFinalTransformation();
 
@@ -555,8 +555,8 @@ namespace Multi_Sensor_Alignment
       //Get Results
       ndt.align(*output_cloud1, current_guess_);
       
-      std::cout << "Normal Distributions Transform converged:" << ndt.hasConverged ()
-                << " score: " << ndt.getFitnessScore () << " prob:" << ndt.getTransformationProbability() << std::endl;
+      ROS_INFO_STREAM_NAMED(node_name, "Normal Distributions Transform converged:" << ndt.hasConverged ()
+                << " score: " << ndt.getFitnessScore () << " prob:" << ndt.getTransformationProbability());
 
       if(ndt.hasConverged() ) 
       {
@@ -564,10 +564,10 @@ namespace Multi_Sensor_Alignment
       
         Eigen::Matrix3f rotation_matrix = current_guess_.block(0,0,3,3);
         Eigen::Vector3f translation_vector = current_guess_.block(0,3,3,1);
-        std::cout << "This transformation can be replicated using:" << std::endl;
-        std::cout << "rosrun tf static_transform_publisher " << translation_vector.transpose()
+        ROS_INFO_STREAM_NAMED(node_name, "This transformation can be replicated using:");
+        ROS_INFO_STREAM_NAMED(node_name, "rosrun tf static_transform_publisher " << translation_vector.transpose()
                 << " " << rotation_matrix.eulerAngles(2,1,0).transpose() << " /" << parent_frame
-                << " /" << child_frame << " 10" << std::endl;
+                << " /" << child_frame << " 10");
       }
 
     }
@@ -615,8 +615,8 @@ namespace Multi_Sensor_Alignment
         //Get Results
         reg.align (*reg_result, current_guess_);
 
-        std::cout << "ICP with Normals converged:" << reg.hasConverged ()
-                << " score: " << reg.getFitnessScore () << " epsilon:" << reg.getTransformationEpsilon() << std::endl;
+        ROS_INFO_STREAM_NAMED(node_name, "ICP with Normals converged:" << reg.hasConverged ()
+                << " score: " << reg.getFitnessScore () << " epsilon:" << reg.getTransformationEpsilon());
         
         if(reg.hasConverged() ) current_guess_ = reg.getFinalTransformation();
 
