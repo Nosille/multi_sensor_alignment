@@ -2,54 +2,60 @@
 <!-- This is setup to compare two lidar streams and output the transform between them -->
 <launch>
   <arg name="namespace"                  default="sensor_alignment"/>
-  <arg name="sensor_id"                  default="basler_camera_front"/>
 
-  <arg name="fixed_frame"               default=""/>
+  <arg name="lidar_index"                default="0"            doc="Int: Lidar to be aligned to"/>
+  <arg name="camera_index"               default="0"            doc="Int: Camera to align"/>
+ 
+  <arg name="vehicle_config_path"        default="$(find erdc_vehicle)/vehicle"/>
 
-  <arg name="alignment_file"             default="$(find multi_sensor_alignment)/config/$(arg namespace)/$(arg sensor_id)_joint_state.yaml" />
-  <!-- <arg name="alignment_server"           default="/$(arg namespace)/$(arg sensor_id)/align_publisher"/> -->
-  <arg name="alignment_server"           default=""/>
-     
+  <arg name="none"                       value="none"/> 
+  <arg name="env_camera_type"            value="vehicle_camera_$(arg camera_index)_type"/> 
+  <arg name="camera_type"                default="$(eval optenv(env_camera_type, none))"/>
+
+  <arg name="env_name_short"             value="vehicle_camera_$(arg camera_index)_name_short"/>
+  <arg name="camera_name_short"          default="$(eval optenv(env_name_short, camera_index))"/>
+
+  <!-- <arg name="fixed_frame"               default=""/> -->
+
+  <arg name="alignment_file"             default="$(arg vehicle_config_path)/config/sensor_alignment/$(arg camera_type)_camera_$(arg camera_name_short)_joint_state.yaml" />
+  <arg name="alignment_server"           default="/$(arg namespace)/camera_$(arg camera_index)/align_publisher"/>
+      
   <arg name="output_frequency"           default="1.00" />
   <arg name="buffer_size"                default="1" />
        
-  <arg name="input_cloud_topic"          default="/lidar/vl_points_0" />
-  <arg name="input_image_topic"          default="/vision/basler_camera_front/image_color" />
-  <arg name="input_info_topic"           default="/vision/basler_camera_front/camera_info" />
+  <arg name="input_cloud_topic"          default="/lidar/cloud$(arg lidar_index)/points" />
+  <arg name="input_image_topic"          default="/vision/camera$(arg camera_index)/image_color" />
+  <arg name="input_info_topic"           default="/vision/camera$(arg camera_index)/camera_info" />
   <arg name="is_rectified"               default="false"/>
-  <arg name="output_cloud_topic"         default="/$(arg namespace)/$(arg sensor_id)/points"/>
-  <arg name="output_image_topic"         default="/$(arg namespace)/$(arg sensor_id)/image"/>
-  <arg name="output_marker_topic"        default="/$(arg namespace)/$(arg sensor_id)/markers"/>
-  <arg name="output_transform_topic"     default="/$(arg namespace)/$(arg sensor_id)/transform"/>
+  <arg name="output_cloud_topic"         default="/$(arg namespace)/camera_$(arg camera_index)/points"/>
+  <arg name="output_image_topic"         default="/$(arg namespace)/camera_$(arg camera_index)/image"/>
+  <arg name="output_marker_topic"        default="/$(arg namespace)/camera_$(arg camera_index)/markers"/>
+  <arg name="output_transform_topic"     default="/$(arg namespace)/camera_$(arg camera_index)/transform"/>
 
-  <arg name="grid_cols"                  default="9"/>
-  <arg name="grid_rows"                  default="6"/>
-  <arg name="square_size_mm"             default="84.4"/>
-  <arg name="board_width_mm"             default="914"/>
-  <arg name="board_height_mm"            default="610"/>
+  <arg name="grid_cols"                  default="11"/>
+  <arg name="grid_rows"                  default="7"/>
+  <arg name="square_size_mm"             default="69.85"/>
+  <arg name="board_width_mm"             default="914.4"/>
+  <arg name="board_height_mm"            default="609.6"/>
   <arg name="width_offset_mm"            default="0"/>
   <arg name="height_offset_mm"           default="0"/>
 
   <!-- Filters -->
   <arg name="filter/i_min"               default="0"/> 
-  <arg name="filter/i_max"               default="100"/>
-  <arg name="filter/x_min"               default="0"/> 
-  <arg name="filter/x_max"               default="4"/> 
-  <arg name="filter/y_min"               default="-1"/> 
-  <arg name="filter/y_max"               default="2"/> 
-  <arg name="filter/z_min"               default="-1"/> 
-  <arg name="filter/z_max"               default="+1"/> 
+  <arg name="filter/i_max"               default="10000"/>
+  <arg name="filter/x_min"               default="1"/> 
+  <arg name="filter/x_max"               default="3"/> 
+  <arg name="filter/y_min"               default="-2"/> 
+  <arg name="filter/y_max"               default="+2"/> 
+  <arg name="filter/z_min"               default="-2"/> 
+  <arg name="filter/z_max"               default="+2"/> 
 
   <arg name="rqt_reconfigure"            default="false"   doc="Start rqt_reconfigure"/>
 
-    
-  <node ns="$(arg namespace)/$(arg sensor_id)" name="cb_align_tool" pkg="multi_sensor_alignment" type="cb_align_tool" output="screen">
+  <node ns="$(arg namespace)/camera_$(arg camera_index)" name="cb_align_tool" pkg="multi_sensor_alignment" type="cb_align_tool" output="screen">
     <rosparam command="load"                      file="$(arg alignment_file)" unless="$(eval arg('alignment_file') == '')"/>
     
-    <param name="parent_frame"                    value="$(arg fixed_frame)" unless="$(eval arg('fixed_frame') == '')"/>
-    <param name="child_frame"                     value="$(arg fixed_frame)" unless="$(eval arg('fixed_frame') == '')"/>
-
-    <param name="alignment_server"                value="$(arg alignment_server)" if="$(eval arg('fixed_frame') == '')"/>
+    <param name="alignment_server"                value="$(arg alignment_server)"/>
 
     <param name="output_frequency"                value="$(arg output_frequency)"/>
     <param name="buffer_size"                     value="$(arg buffer_size)"/>

@@ -129,6 +129,10 @@ namespace Multi_Sensor_Alignment
       ROS_INFO_STREAM_NAMED(node_name, "input_image_topic set to " << input_image_topic_);
     pnh_.param<std::string>("input_info_topic", input_info_topic_, "input_info");
       ROS_INFO_STREAM_NAMED(node_name, "input_info_topic set to " << input_info_topic_);
+    pnh_.param<std::string>("image_cloud_topic", image_cloud_topic_, "image_cloud");
+      ROS_INFO_STREAM_NAMED(node_name, "image_cloud_topic set to " << image_cloud_topic_);
+    pnh_.param<std::string>("filter_cloud_topic", filter_cloud_topic_, "filter_cloud");
+      ROS_INFO_STREAM_NAMED(node_name, "filter_cloud_topic set to " << filter_cloud_topic_);
     pnh_.param<std::string>("output_cloud_topic", output_cloud_topic_, "output_cloud");
       ROS_INFO_STREAM_NAMED(node_name, "output_cloud_topic set to " << output_cloud_topic_);
     pnh_.param<std::string>("output_camera_topic", output_camera_topic_, "output_camera");
@@ -159,8 +163,8 @@ namespace Multi_Sensor_Alignment
     pnh_.param("filter/z_max", alignToolConfig_.z_max, alignToolConfig_.z_max);
       ROS_INFO_STREAM_NAMED(node_name, "filter max z set to " << alignToolConfig_.z_max);
 
-    pnh_.param("plane_tol", plane_tol_, 0.02);
-      ROS_INFO_STREAM_NAMED(node_name, "plane_tol set to " << plane_tol_);
+    pnh_.param("plane_tol", alignToolConfig_.plane_tol, 0.05);
+      ROS_INFO_STREAM_NAMED(node_name, "plane_tol set to " << alignToolConfig_.plane_tol);
 
   //initialized source classes
     sourceCloud_ = new SourceCloud(nh_, input_cloud_topic_);
@@ -175,6 +179,8 @@ namespace Multi_Sensor_Alignment
 
   // ROS publishers
     output_trans_pub_  = nh_.advertise<geometry_msgs::TransformStamped>(output_trans_topic_,100);
+    image_cloud_pub_   = nh_.advertise<sensor_msgs::PointCloud2>(image_cloud_topic_,10);
+    filter_cloud_pub_  = nh_.advertise<sensor_msgs::PointCloud2>(filter_cloud_topic_,10);
     output_cloud_pub_  = nh_.advertise<sensor_msgs::PointCloud2>(output_cloud_topic_,10);
     output_camera_pub_ = nh_.advertise<sensor_msgs::Image>(output_camera_topic_,10);
     output_marker_pub_ = nh_.advertise<visualization_msgs::Marker>(output_marker_topic_, 10);
@@ -198,6 +204,7 @@ namespace Multi_Sensor_Alignment
   {
     
     ROS_INFO("Reconfigure Request: %f %f %f %f %f %f %f %f ", 
+            config.plane_tol,
             config.i_min, config.i_max, 
             config.x_min, config.x_max, 
             config.y_min, config.y_max, 
@@ -296,21 +303,12 @@ namespace Multi_Sensor_Alignment
 
     // Extract output transform as difference between these transforms
        tf2::Transform transform1, transform2;
-       tf2::convert(cloud_transform_->transform, transform2);
-       tf2::Vector3 vector2(transform2.getOrigin());
-       tf2::Matrix3x3 matrix2(transform2.getRotation());
-       double x, y, z, roll, pitch, yaw;
-       x = vector2.getX();
-       y = vector2.getY();
-       z = vector2.getZ();
-       matrix2.getRPY(roll, pitch, yaw);
-         //ROS_INFO_STREAM("cloud transform");
-         ROS_INFO_STREAM("cloud_transform->translation\n" << x << "\n" << y << "\n" << z);
-         ROS_INFO_STREAM("cloud_transform->rotation\n"    << roll << "\n" << pitch << "\n" << yaw);
-         
+       
+       //image transform
        tf2::convert(image_transform_->transform, transform1);
        tf2::Vector3 vector1(transform1.getOrigin());
        tf2::Matrix3x3 matrix1(transform1.getRotation());
+       double x, y, z, roll, pitch, yaw;
        x = vector1.getX();
        y = vector1.getY();
        z = vector1.getZ();
@@ -319,6 +317,18 @@ namespace Multi_Sensor_Alignment
          ROS_INFO_STREAM("image_transform->translation\n" << x << "\n" << y << "\n" << z);
          ROS_INFO_STREAM("image_transform->rotation\n"    << roll << "\n" << pitch << "\n" << yaw);
        
+       //pointcloud transform
+       tf2::convert(cloud_transform_->transform, transform2);
+       tf2::Vector3 vector2(transform2.getOrigin());
+       tf2::Matrix3x3 matrix2(transform2.getRotation());
+       x = vector2.getX();
+       y = vector2.getY();
+       z = vector2.getZ();
+       matrix2.getRPY(roll, pitch, yaw);
+         //ROS_INFO_STREAM("cloud transform");
+         ROS_INFO_STREAM("cloud_transform->translation\n" << x << "\n" << y << "\n" << z);
+         ROS_INFO_STREAM("cloud_transform->rotation\n"    << roll << "\n" << pitch << "\n" << yaw);
+
        tf2::Transform transform3 = transform1.inverseTimes(transform2);
        tf2::Vector3 vector3(transform3.getOrigin());
        tf2::Matrix3x3 matrix3(transform3.getRotation());
@@ -335,7 +345,6 @@ namespace Multi_Sensor_Alignment
     {
       ROS_INFO_STREAM("Chessboard Not Found");
     }
-    
 
   }
 
@@ -424,6 +433,12 @@ namespace Multi_Sensor_Alignment
       cb_pose(j,3) = tvec.at<double>(j);
     }
     geometry_msgs::Transform transform = tf2::eigenToTransform(cb_pose).transform;
+
+    // invert transform
+    // tf2::Transform transform_tf; tf2::convert(transform, transform_tf);
+    // tf2::Transform inverse_tf = transform_tf.inverse();
+    // tf2::convert(inverse_tf, transform);
+
     image_transform_->transform.translation.x = transform.translation.x/1000.0;
     image_transform_->transform.translation.y = transform.translation.y/1000.0;
     image_transform_->transform.translation.z = transform.translation.z/1000.0;
@@ -472,51 +487,114 @@ namespace Multi_Sensor_Alignment
 
   //transform to child frame from optical frame
     tf2::doTransform(*image_transform_, *image_transform_, sourceImage_->transform);
+
+    pcl::PointCloud<pcl::PointXYZ>::Ptr image_corners(new pcl::PointCloud<pcl::PointXYZ>);
+    for (int k = 0; k < boardcorners.size(); k++)
+    {
+      pcl::PointXYZ temp_point;
+      temp_point.x = boardcorners[k].x/1000;
+      temp_point.y = boardcorners[k].y/1000;
+      temp_point.z = boardcorners[k].z/1000;
+      image_corners->points.push_back(temp_point);
+    }
+    pcl::PointXYZ temp_point;
+    temp_point.x = 0.0;
+      temp_point.y = 0.0;
+      temp_point.z = 0.1;
+      image_corners->points.push_back(temp_point);
+
+    sensor_msgs::PointCloud2 corners_xy; pcl::toROSMsg(*image_corners, corners_xy);
+    tf2::doTransform(corners_xy, corners_xy, *image_transform_);
+
+    // Publish the cloud
+    image_cloud_pub_.publish(corners_xy);
+
+
   }
 
   void Chessboard_Alignment::CloudTransform(pcl::PointCloud<PointT>::Ptr &cloud)
   {
-    ROS_DEBUG_STREAM("Filter Cloud");
+    ROS_INFO_STREAM("Filter Cloud");
   //Filter the cloud using user defined filtering parameters
     pcl::PointCloud<PointT>::Ptr cloud_filtered(new pcl::PointCloud<PointT>);
     DownsampleCloud(*cloud, *cloud_filtered, 0.0);
 
   //Further filter the cloud by drawing a cube around the center point found in the image transform
+      pcl::PointCloud<PointT>::Ptr cloud_filtered2(new pcl::PointCloud<PointT>);
     pcl::CropBox<PointT> boxFilter;
-    float maxDim = std::max(board_width_, board_height_);
-    float minX = image_transform_->transform.translation.x - maxDim;
-    float maxX = image_transform_->transform.translation.x + maxDim;
-    float minY = image_transform_->transform.translation.y - maxDim;
-    float maxY = image_transform_->transform.translation.y + maxDim;
-    float minZ = image_transform_->transform.translation.z - maxDim;
-    float maxZ = image_transform_->transform.translation.z + maxDim;
+    float maxDim = std::max(board_width_, board_height_)/1000;
+    float minX = image_transform_->transform.translation.x - 0.55*maxDim;
+    float maxX = image_transform_->transform.translation.x + 0.55*maxDim;
+    float minY = image_transform_->transform.translation.y - 0.55*maxDim;
+    float maxY = image_transform_->transform.translation.y + 0.55*maxDim;
+    float minZ = image_transform_->transform.translation.z - 0.55*maxDim;
+    float maxZ = image_transform_->transform.translation.z + 0.55*maxDim;
+    // ROS_INFO_STREAM("  min:" << minX << ":" << minY << ":" << minZ);
+    // ROS_INFO_STREAM("  max:" << maxX << ":" << maxY << ":" << maxZ);
     boxFilter.setMin(Eigen::Vector4f(minX, minY, minZ, 1.0));
     boxFilter.setMax(Eigen::Vector4f(maxX, maxY, maxZ, 1.0));
     boxFilter.setInputCloud(cloud_filtered);
-    boxFilter.filter(*cloud_filtered);
+    boxFilter.filter(*cloud_filtered2);
 
-  //Find Board
+    // // Publish the cloud
+    sensor_msgs::PointCloud2 cloud_filter;
+    pcl::toROSMsg(*cloud_filtered2, cloud_filter);
+    filter_cloud_pub_.publish(cloud_filter);
+
+  //Find Plane of Board
     int count = 0;
-    pcl::PointCloud<PointT>::Ptr cloud_outliers(new pcl::PointCloud<PointT>(*cloud_filtered));
+    pcl::PointCloud<PointT>::Ptr cloud_outliers(new pcl::PointCloud<PointT>(*cloud_filtered2));
     pcl::PointCloud<PointT>::Ptr cloud_plane(new pcl::PointCloud<PointT>);
     pcl::PointCloud<PointT>::Ptr cloud_hull(new pcl::PointCloud<PointT>);
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_corner(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::PointCloud<PointT>::Ptr cloud_combined(new pcl::PointCloud<PointT>);
     cloud_plane->header = cloud_hull->header = cloud_corner->header = cloud_combined->header = cloud_outliers->header;
     pcl::PointXYZ point_normal;
-    while(cloud_outliers->size() > 30)
+    
+    for(int i = 0; i < 1; i++)
+    // while(cloud_outliers->size() > 30)
     {
       count = count + 1;
     //Fit plane
-      ROS_DEBUG_STREAM("Fit Plane");
+      ROS_INFO_STREAM("Fit Plane");
+      //Use image plane as initial guess
+      pcl::ModelCoefficients::Ptr coefficients_image(new pcl::ModelCoefficients);
       pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+      coefficients_image->values.emplace_back(0.0);
+      coefficients_image->values.emplace_back(0.0);
+      coefficients_image->values.emplace_back(1.0);
+      coefficients_image->values.emplace_back(0.0);
+      ROS_INFO_STREAM("  image plane:" << coefficients_image->values[0] << ":" << coefficients_image->values[1] << ":" << coefficients_image->values[2] << ":" << coefficients_image->values[3]);
+      coefficients = coefficients_image;
+
+      Eigen::Affine3d eigenTransform = tf2::transformToEigen(image_transform_->transform);
+
+      // Eigen::Matrix3d m = eigenTransform.rotation();
+      // Eigen::Vector3d v = eigenTransform.translation();
+      // Eigen::Quaterniond q = (Eigen::Quaterniond)eigenTransform.linear();
+      // double x, y, z, qx, qy, qz, qw;
+      //  x = v.x();
+      //  y = v.y();
+      //  z = v.z();
+      //  qx = q.x();
+      //  qy = q.y();
+      //  qz = q.z();
+      //  qw = q.w();
+      //    //ROS_INFO_STREAM("image transform");    
+      // ROS_INFO_STREAM("image_transform->translation\n" << x << "\n" << y << "\n" << z);
+      // ROS_INFO_STREAM("image_transform->quaterion\n"  << qx << "\n" << qy << "\n" << qz << "\n" << qw);
+
+      ROS_INFO_STREAM("  Transform");
+      pcl::transformPlane(coefficients_image, coefficients, eigenTransform);
+      ROS_INFO_STREAM("    guess plane:" << coefficients->values[0] << ":" << coefficients->values[1] << ":" << coefficients->values[2] << ":" << coefficients->values[3]);
+
       pcl::PointIndices::Ptr inliers(new pcl::PointIndices());
       pcl::SACSegmentation<PointT> seg;
       seg.setOptimizeCoefficients(true);
       seg.setModelType(pcl::SACMODEL_PLANE);
       seg.setMethodType(pcl::SAC_RANSAC);
-      seg.setDistanceThreshold(plane_tol_);
-      seg.setMaxIterations(1000);
+      seg.setDistanceThreshold(alignToolConfig_.plane_tol);
+      seg.setMaxIterations(100);
       seg.setInputCloud(cloud_outliers);
       seg.segment(*inliers, *coefficients);
 
@@ -524,6 +602,11 @@ namespace Multi_Sensor_Alignment
       {
         ROS_WARN_STREAM("Unable to find plane in cloud segment " << count);
         break;
+      }
+      else
+      {
+         ROS_INFO_STREAM("  fit points:" << inliers->indices.size() << "/" << cloud_outliers->size());
+         ROS_INFO_STREAM("  fit plane:" << coefficients->values[0] << ":" << coefficients->values[1] << ":" << coefficients->values[2] << ":" << coefficients->values[3]);
       }
 
     // Project the inliers on the plane
@@ -535,11 +618,16 @@ namespace Multi_Sensor_Alignment
       float mag = sqrt(pow(coefficients->values[0], 2) + pow(coefficients->values[1], 2)
         + pow(coefficients->values[2], 2));
       float sign = 1;
-      if(coefficients->values[0] > 0) sign = -1;  //Vector should always point back toward camera 
+      // if(coefficients->values[0] > 0) sign = -1;  //Vector should always point back toward camera 
       point_normal.x = sign*coefficients->values[0]/mag;
       point_normal.y = sign*coefficients->values[1]/mag;
       point_normal.z = sign*coefficients->values[2]/mag;
-      ROS_DEBUG_STREAM("Plane Points: " << cloud_plane->size());
+      ROS_INFO_STREAM("Plane Points: " << cloud_plane->size());
+
+      // Publish the cloud
+      sensor_msgs::PointCloud2 cloud_final;
+      pcl::toROSMsg(*cloud_plane, cloud_final);
+      output_cloud_pub_.publish(cloud_final);
 
 
       // create a visualization object
@@ -595,16 +683,17 @@ namespace Multi_Sensor_Alignment
       pcl::PointCloud<PointT>::Ptr downleft(new pcl::PointCloud<PointT>);
       for(int i = 0; i < cloud_hull->size(); i++)
       {
-        if( (cloud_hull->points[i].y < (key_points.points[0].y))             && (cloud_hull->points[i].z < (key_points.points[1].z)) 
-         && (cloud_hull->points[i].y > (key_points.points[1].y+ plane_tol_)) && (cloud_hull->points[i].z > (key_points.points[0].z + plane_tol_))) { downright->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
-        if( (cloud_hull->points[i].y < (key_points.points[2].y))             && (cloud_hull->points[i].z > (key_points.points[1].z)) 
-         && (cloud_hull->points[i].y > (key_points.points[1].y+ plane_tol_)) && (cloud_hull->points[i].z < (key_points.points[2].z - plane_tol_))) { upright->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
-        if( (cloud_hull->points[i].y > (key_points.points[2].y))             && (cloud_hull->points[i].z > (key_points.points[3].z)) 
-         && (cloud_hull->points[i].y < (key_points.points[3].y- plane_tol_)) && (cloud_hull->points[i].z < (key_points.points[2].z - plane_tol_))) { upleft->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
-        if( (cloud_hull->points[i].y > (key_points.points[0].y))             && (cloud_hull->points[i].z < (key_points.points[3].z)) 
-         && (cloud_hull->points[i].y < (key_points.points[3].y- plane_tol_)) && (cloud_hull->points[i].z > (key_points.points[0].z + plane_tol_))) { downleft->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
+        double plane_tol = alignToolConfig_.plane_tol;
+        if( (cloud_hull->points[i].y < (key_points.points[0].y))            && (cloud_hull->points[i].z < (key_points.points[1].z)) 
+         && (cloud_hull->points[i].y > (key_points.points[1].y+ plane_tol)) && (cloud_hull->points[i].z > (key_points.points[0].z + plane_tol))) { downright->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
+        if( (cloud_hull->points[i].y < (key_points.points[2].y))            && (cloud_hull->points[i].z > (key_points.points[1].z)) 
+         && (cloud_hull->points[i].y > (key_points.points[1].y+ plane_tol)) && (cloud_hull->points[i].z < (key_points.points[2].z - plane_tol))) { upright->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
+        if( (cloud_hull->points[i].y > (key_points.points[2].y))            && (cloud_hull->points[i].z > (key_points.points[3].z)) 
+         && (cloud_hull->points[i].y < (key_points.points[3].y- plane_tol)) && (cloud_hull->points[i].z < (key_points.points[2].z - plane_tol))) { upleft->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
+        if( (cloud_hull->points[i].y > (key_points.points[0].y))            && (cloud_hull->points[i].z < (key_points.points[3].z)) 
+         && (cloud_hull->points[i].y < (key_points.points[3].y- plane_tol)) && (cloud_hull->points[i].z > (key_points.points[0].z + plane_tol))) { downleft->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
       }
-      ROS_DEBUG_STREAM("Edge Points: " << downright->points.size() << "," << upright->points.size() << "," << upleft->points.size() << "," << downleft->points.size());
+      ROS_INFO_STREAM("Edge Points: " << downright->points.size() << "," << upright->points.size() << "," << upleft->points.size() << "," << downleft->points.size());
       if((downright->points.size() < 3) || (upright->points.size() < 3) || (upleft->points.size() < 3) || (downleft->points.size() < 3))
       {
         ROS_WARN_STREAM("Insufficient points along one edge of plane " << count);
@@ -619,7 +708,7 @@ namespace Multi_Sensor_Alignment
 
       seg.setModelType(pcl::SACMODEL_LINE);
       seg.setMethodType(pcl::SAC_RANSAC);
-      seg.setDistanceThreshold(plane_tol_*2);
+      seg.setDistanceThreshold(alignToolConfig_.plane_tol*2);
       seg.setOptimizeCoefficients(true);
       
       pcl::ModelCoefficients::Ptr a_coefficients (new pcl::ModelCoefficients);
@@ -655,7 +744,8 @@ namespace Multi_Sensor_Alignment
       ROS_DEBUG_STREAM("Find Intersections");
       Eigen::Vector4f Point_l;
       pcl::PointXYZ basic_point; // intersection points stored here
-      if(pcl::lineWithLineIntersection(*l_coefficients[3], *l_coefficients[0], Point_l, plane_tol_*plane_tol_/4.))
+      double plane_tol = alignToolConfig_.plane_tol;
+      if(pcl::lineWithLineIntersection(*l_coefficients[3], *l_coefficients[0], Point_l, plane_tol*plane_tol/4.))
       {
         basic_point.x = Point_l[0];
         basic_point.y = Point_l[1];
@@ -669,7 +759,7 @@ namespace Multi_Sensor_Alignment
         continue;
       }
       
-      if(pcl::lineWithLineIntersection(*l_coefficients[0], *l_coefficients[1], Point_l, plane_tol_*plane_tol_/4.))
+      if(pcl::lineWithLineIntersection(*l_coefficients[0], *l_coefficients[1], Point_l, plane_tol*plane_tol/4.))
       {
         basic_point.x = Point_l[0];
         basic_point.y = Point_l[1];
@@ -683,7 +773,7 @@ namespace Multi_Sensor_Alignment
         continue;
       }
 
-      if(pcl::lineWithLineIntersection(*l_coefficients[1], *l_coefficients[2], Point_l, plane_tol_*plane_tol_/4.))
+      if(pcl::lineWithLineIntersection(*l_coefficients[1], *l_coefficients[2], Point_l, plane_tol*plane_tol/4.))
       {
         basic_point.x = Point_l[0];
         basic_point.y = Point_l[1];
@@ -696,7 +786,7 @@ namespace Multi_Sensor_Alignment
         ROS_WARN_STREAM("Unable to find corner point 3 in plane " << count);
         continue;
       }
-      if(pcl::lineWithLineIntersection(*l_coefficients[2], *l_coefficients[3], Point_l, plane_tol_*plane_tol_/4.))
+      if(pcl::lineWithLineIntersection(*l_coefficients[2], *l_coefficients[3], Point_l, plane_tol*plane_tol/4.))
       {
         basic_point.x = Point_l[0];
         basic_point.y = Point_l[1];
@@ -738,7 +828,7 @@ namespace Multi_Sensor_Alignment
       center2.z = (cloud_corner->points[3].z+cloud_corner->points[1].z)/2.0;
       if(((center1.x - center2.x)*(center1.x - center2.x) +
           (center1.y - center2.y)*(center1.y - center2.y) + 
-          (center1.z - center2.z)*(center1.z - center2.z)) > plane_tol_*plane_tol_);
+          (center1.z - center2.z)*(center1.z - center2.z)) > plane_tol*plane_tol);
       {
         ROS_WARN_STREAM("Board diagonals do not cross on plane " << count);
         continue;
@@ -754,11 +844,11 @@ namespace Multi_Sensor_Alignment
     }
 
   // Publish the cloud
-    sensor_msgs::PointCloud2 cloud_final;
-    if(cloud_corner->points.size() == 5) pcl::toROSMsg(*cloud_combined, cloud_final);
-    else pcl::toROSMsg(*cloud_hull, cloud_final);
-    ROS_DEBUG_STREAM("Publishing Cloud");
-    output_cloud_pub_.publish(cloud_final);
+    // sensor_msgs::PointCloud2 cloud_final;
+    // if(cloud_corner->points.size() == 5) pcl::toROSMsg(*cloud_combined, cloud_final);
+    // else pcl::toROSMsg(*cloud_hull, cloud_final);
+    // ROS_DEBUG_STREAM("Publishing Cloud");
+    // output_cloud_pub_.publish(cloud_final);
 
     if(cloud_corner->points.size() != 5) return;
 
@@ -1086,7 +1176,7 @@ namespace Multi_Sensor_Alignment
       if(in_cloud.points[i].z         >= alignToolConfig_.z_min && in_cloud.points[i].z <= alignToolConfig_.z_max)
         filtered_ptr->push_back(in_cloud.points[i]);
     }
-    
+
     if(in_leaf_size > 0.001)
     {
       pcl::VoxelGrid<PointT> voxelized;

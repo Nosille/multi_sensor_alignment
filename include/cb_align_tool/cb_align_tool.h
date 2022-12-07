@@ -29,6 +29,8 @@ Copyright (c) 2017
 #include <visualization_msgs/Marker.h>
 
 #include <pcl/common/common.h>
+#include <pcl/common/eigen.h>
+#include <pcl/common/transforms.h>
 #include <pcl/common/intersections.h>
 #include <pcl/filters/filter.h>
 #include <pcl/filters/crop_box.h>
@@ -118,8 +120,11 @@ namespace Multi_Sensor_Alignment
     std::string parent_frame_id_, child_frame_id_;
     std::string output_trans_topic_;
     std::string output_cloud_topic_, output_camera_topic_, output_marker_topic_;
+    std::string image_cloud_topic_;
+    std::string filter_cloud_topic_;
     std::string align_server_name_;
     ros::Publisher output_trans_pub_, output_cloud_pub_, output_camera_pub_, output_marker_pub_;
+    ros::Publisher image_cloud_pub_, filter_cloud_pub_;
 
     tf2_ros::TransformListener tfListener_;
     tf2_ros::Buffer tfBuffer_;
@@ -143,7 +148,6 @@ namespace Multi_Sensor_Alignment
 
     int grid_rows_, grid_cols_;
     double square_size_, board_height_, board_width_, height_offset_, width_offset_;
-    double plane_tol_;
 
     ros::ServiceServer service0_, service1_;
 
