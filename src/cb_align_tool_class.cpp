@@ -277,28 +277,31 @@ namespace Multi_Sensor_Alignment
 
     // Pointcloud
     const std::lock_guard<std::mutex> lock_cloud(cloud_mutex_);
-    pcl::PointCloud<PointT>::Ptr cloud(new pcl::PointCloud<PointT>);
+    pcl::PointCloud<PointT>::Ptr lidar_cloud(new pcl::PointCloud<PointT>);
+    pcl::PointCloud<PointT>::Ptr image_cloud(new pcl::PointCloud<PointT>);
     if(sourceCloud_->cloud_buffer.back().width < 1 || sourceCloud_->cloud_buffer.back().height < 1)
     {
        ROS_WARN_STREAM("No cloud found");
        return;
     }
-    pcl::fromPCLPointCloud2(sourceCloud_->cloud_buffer.back(), *cloud);
+    pcl::fromPCLPointCloud2(sourceCloud_->cloud_buffer.back(), *lidar_cloud);
     
   //Check image for Chessboard Pattern
     cv::Size2i patternNum(grid_rows_,grid_cols_);
-    std::vector<cv::Point2f> corners;
-    bool patternfound = cv::findChessboardCorners(gray, patternNum, corners,
+    std::vector<cv::Point2f> chessCorners;
+    bool patternfound = cv::findChessboardCorners(gray, patternNum, chessCorners,
                                                   cv::CALIB_CB_ADAPTIVE_THRESH + cv::CALIB_CB_NORMALIZE_IMAGE);
 
   //Proceed with transforms if pattern found
     if(patternfound)
     {
-       ROS_INFO_STREAM("Pattern Found");
+       ROS_INFO_STREAM("Chessboard Found");
        
-    // Find individual transforms 
-       ImageTransform(gray, corners); 
-       CloudTransform(cloud);
+    // Find location of chessboard (image_transform) and create pointcloud (image_cloud) 
+       ImageProcessing(gray, chessCorners, image_cloud); 
+
+    //Filter lidar_cloud to area in vicinity of chessboard in the image   
+       CloudProcessing(lidar_cloud);
 
 
     // Extract output transform as difference between these transforms
@@ -348,12 +351,12 @@ namespace Multi_Sensor_Alignment
 
   }
 
-  void Chessboard_Alignment::ImageTransform(cv::Mat &gray, std::vector<cv::Point2f> &corners)
+  void Chessboard_Alignment::ImageProcessing(cv::Mat &gray, std::vector<cv::Point2f> &chessCorners, pcl::PointCloud<PointT>::Ptr &cloud)
   {
   // Find chessboard features  
     std::vector<cv::Point3f> gridPoints;
     // Find intersecting corner points with sub-pixel accuracy
-    cv::cornerSubPix(gray, corners, cv::Size(11,11), cv::Size(-1,-1),
+    cv::cornerSubPix(gray, chessCorners, cv::Size(11,11), cv::Size(-1,-1),
                   cv::TermCriteria(CV_TERMCRIT_EPS + CV_TERMCRIT_ITER, 30, 0.1));
     cv::Size imgsize;
     imgsize.height = gray.rows;
@@ -408,7 +411,7 @@ namespace Multi_Sensor_Alignment
     {
       //Finds an object pose from 3D-2D point correspondences. 
       //This function returns the rotation and the translation vectors that transform a 3D point expressed in the object coordinate frame to the camera coordinate frame
-      cv::solvePnP(gridPoints, corners, sourceImage_->camera_instrinsics, sourceImage_->distortion_coefficients, rvec, tvec);
+      cv::solvePnP(gridPoints, chessCorners, sourceImage_->camera_instrinsics, sourceImage_->distortion_coefficients, rvec, tvec);
       // // Convert all to image coordinates 
       // cv::projectPoints(gridPoints, rvec, tvec, sourceImage_->camera_instrinsics, sourceImage_->distortion_coefficients, imagePoints0);
       // cv::projectPoints(square_edge, rvec, tvec, sourceImage_->camera_instrinsics, sourceImage_->distortion_coefficients, imagePoints1);
@@ -433,12 +436,6 @@ namespace Multi_Sensor_Alignment
       cb_pose(j,3) = tvec.at<double>(j);
     }
     geometry_msgs::Transform transform = tf2::eigenToTransform(cb_pose).transform;
-
-    // invert transform
-    // tf2::Transform transform_tf; tf2::convert(transform, transform_tf);
-    // tf2::Transform inverse_tf = transform_tf.inverse();
-    // tf2::convert(inverse_tf, transform);
-
     image_transform_->transform.translation.x = transform.translation.x/1000.0;
     image_transform_->transform.translation.y = transform.translation.y/1000.0;
     image_transform_->transform.translation.z = transform.translation.z/1000.0;
@@ -451,7 +448,7 @@ namespace Multi_Sensor_Alignment
       cv::Point3f pt(boardcorners[k]);
       cv::Mat image_points = cv::Mat::eye(3,5,CV_64F);
 
-      // Transform to obtain the coordinates in cam frame
+      // Transform to obtain the coordinates in optical frame
       for (int i = 0; i < 3; i++)
       {
         image_points.at<double>(i,k) = cb_pose(i,0)*pt.x +
@@ -465,19 +462,19 @@ namespace Multi_Sensor_Alignment
       // Mark the corners and the board centre
       if (k==0)
         cv::circle(sourceImage_->image.image, cv::Point(img_coord[0],img_coord[1]),
-            8, CV_RGB(0,255,0),-1); //green
+            12, CV_RGB(0,255,0),-1); //green
       else if (k==1)
         cv::circle(sourceImage_->image.image, cv::Point(img_coord[0],img_coord[1]),
-            8, CV_RGB(255,255,0),-1); //yellow
+            12, CV_RGB(255,255,0),-1); //yellow
       else if (k==2)
         cv::circle(sourceImage_->image.image, cv::Point(img_coord[0],img_coord[1]),
-            8, CV_RGB(0,0,255),-1); //blue
+            12, CV_RGB(0,0,255),-1); //blue
       else if (k==3)
         cv::circle(sourceImage_->image.image, cv::Point(img_coord[0],img_coord[1]),
-            8, CV_RGB(255,0,0),-1); //red
+            12, CV_RGB(255,0,0),-1); //red
       else
         cv::circle(sourceImage_->image.image, cv::Point(img_coord[0],img_coord[1]),
-            8, CV_RGB(255,255,255),-1); //white for centre
+            12, CV_RGB(255,255,255),-1); //white for centre
 
       delete[] img_coord;
     }
@@ -485,34 +482,56 @@ namespace Multi_Sensor_Alignment
   // Republish the image with all the features marked on it
     output_camera_pub_.publish(sourceImage_->image.toImageMsg());
 
-  //transform to child frame from optical frame
+  //transform location of chessboard from optical frame to child frame
     tf2::doTransform(*image_transform_, *image_transform_, sourceImage_->transform);
 
-    pcl::PointCloud<pcl::PointXYZ>::Ptr image_corners(new pcl::PointCloud<pcl::PointXYZ>);
+  //Create pointcloud from chessboard location in child frame
+    pcl::PointCloud<PointT>::Ptr image_corners(new pcl::PointCloud<PointT>);
+    //corners
     for (int k = 0; k < boardcorners.size(); k++)
     {
-      pcl::PointXYZ temp_point;
+      PointT temp_point;
       temp_point.x = boardcorners[k].x/1000;
       temp_point.y = boardcorners[k].y/1000;
       temp_point.z = boardcorners[k].z/1000;
       image_corners->points.push_back(temp_point);
     }
-    pcl::PointXYZ temp_point;
+    //center
+    PointT temp_point;
     temp_point.x = 0.0;
-      temp_point.y = 0.0;
-      temp_point.z = 0.1;
-      image_corners->points.push_back(temp_point);
+    temp_point.y = 0.0;
+    temp_point.z = 0.0;
+    image_corners->points.push_back(temp_point);
+    //fill
+    int n = 20;
+    int m = 20;
+    for(int i = 0; i < n; i++)
+    {
+      for(int j = 0; j < m; j++)
+      {
+        double weight0 = (1.0-i/(double)n) * ((1.0-j/(double)m));
+        double weight1 =     (i/(double)n) * ((1.0-j/(double)m));
+        double weight2 =     (i/(double)n) *     ((j/(double)m));
+        double weight3 = (1.0-i/(double)n) *     ((j/(double)m));
+        PointT temp_point;
+        temp_point.x = (weight0*boardcorners[0].x + weight1*boardcorners[1].x + weight2*boardcorners[2].x + weight3*boardcorners[3].x)/1000;
+        temp_point.y = (weight0*boardcorners[0].y + weight1*boardcorners[1].y + weight2*boardcorners[2].y + weight3*boardcorners[3].y)/1000;
+        temp_point.z = (weight0*boardcorners[0].z + weight1*boardcorners[1].z + weight2*boardcorners[2].z + weight3*boardcorners[3].z)/1000;
+        // ROS_INFO_STREAM(temp_point.x << ":" << temp_point.y << ":" << temp_point.z);
+        cloud->points.push_back(temp_point);
+      }
+    }
 
-    sensor_msgs::PointCloud2 corners_xy; pcl::toROSMsg(*image_corners, corners_xy);
-    tf2::doTransform(corners_xy, corners_xy, *image_transform_);
+    sensor_msgs::PointCloud2 cloud_pc2; pcl::toROSMsg(*cloud, cloud_pc2);
+    tf2::doTransform(cloud_pc2, cloud_pc2, *image_transform_);
 
     // Publish the cloud
-    image_cloud_pub_.publish(corners_xy);
+    image_cloud_pub_.publish(cloud_pc2);
 
 
   }
 
-  void Chessboard_Alignment::CloudTransform(pcl::PointCloud<PointT>::Ptr &cloud)
+  void Chessboard_Alignment::CloudProcessing(pcl::PointCloud<PointT>::Ptr &cloud)
   {
     ROS_INFO_STREAM("Filter Cloud");
   //Filter the cloud using user defined filtering parameters
@@ -541,451 +560,450 @@ namespace Multi_Sensor_Alignment
     pcl::toROSMsg(*cloud_filtered2, cloud_filter);
     filter_cloud_pub_.publish(cloud_filter);
 
-  //Find Plane of Board
-    int count = 0;
-    pcl::PointCloud<PointT>::Ptr cloud_outliers(new pcl::PointCloud<PointT>(*cloud_filtered2));
-    pcl::PointCloud<PointT>::Ptr cloud_plane(new pcl::PointCloud<PointT>);
-    pcl::PointCloud<PointT>::Ptr cloud_hull(new pcl::PointCloud<PointT>);
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_corner(new pcl::PointCloud<pcl::PointXYZ>);
-    pcl::PointCloud<PointT>::Ptr cloud_combined(new pcl::PointCloud<PointT>);
-    cloud_plane->header = cloud_hull->header = cloud_corner->header = cloud_combined->header = cloud_outliers->header;
-    pcl::PointXYZ point_normal;
+  // //Find Plane of Board
+  //   int count = 0;
+  //   pcl::PointCloud<PointT>::Ptr cloud_outliers(new pcl::PointCloud<PointT>(*cloud_filtered2));
+  //   pcl::PointCloud<PointT>::Ptr cloud_plane(new pcl::PointCloud<PointT>);
+  //   pcl::PointCloud<PointT>::Ptr cloud_hull(new pcl::PointCloud<PointT>);
+  //   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_corner(new pcl::PointCloud<pcl::PointXYZ>);
+  //   pcl::PointCloud<PointT>::Ptr cloud_combined(new pcl::PointCloud<PointT>);
+  //   cloud_plane->header = cloud_hull->header = cloud_corner->header = cloud_combined->header = cloud_outliers->header;
+  //   pcl::PointXYZ point_normal;
     
-    for(int i = 0; i < 1; i++)
-    // while(cloud_outliers->size() > 30)
-    {
-      count = count + 1;
-    //Fit plane
-      ROS_INFO_STREAM("Fit Plane");
-      //Use image plane as initial guess
-      pcl::ModelCoefficients::Ptr coefficients_image(new pcl::ModelCoefficients);
-      pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
-      coefficients_image->values.emplace_back(0.0);
-      coefficients_image->values.emplace_back(0.0);
-      coefficients_image->values.emplace_back(1.0);
-      coefficients_image->values.emplace_back(0.0);
-      ROS_INFO_STREAM("  image plane:" << coefficients_image->values[0] << ":" << coefficients_image->values[1] << ":" << coefficients_image->values[2] << ":" << coefficients_image->values[3]);
-      coefficients = coefficients_image;
+  //   while(cloud_outliers->size() > 30)
+  //   {
+  //     count = count + 1;
+  //   //Fit plane
+  //     ROS_INFO_STREAM("Fit Plane");
+  //     //Use image plane as initial guess
+  //     pcl::ModelCoefficients::Ptr coefficients_image(new pcl::ModelCoefficients);
+  //     pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+  //     coefficients_image->values.emplace_back(0.0);
+  //     coefficients_image->values.emplace_back(0.0);
+  //     coefficients_image->values.emplace_back(1.0);
+  //     coefficients_image->values.emplace_back(0.0);
+  //     ROS_INFO_STREAM("  image plane:" << coefficients_image->values[0] << ":" << coefficients_image->values[1] << ":" << coefficients_image->values[2] << ":" << coefficients_image->values[3]);
+  //     coefficients = coefficients_image;
 
-      Eigen::Affine3d eigenTransform = tf2::transformToEigen(image_transform_->transform);
+  //     Eigen::Affine3d eigenTransform = tf2::transformToEigen(image_transform_->transform);
 
-      // Eigen::Matrix3d m = eigenTransform.rotation();
-      // Eigen::Vector3d v = eigenTransform.translation();
-      // Eigen::Quaterniond q = (Eigen::Quaterniond)eigenTransform.linear();
-      // double x, y, z, qx, qy, qz, qw;
-      //  x = v.x();
-      //  y = v.y();
-      //  z = v.z();
-      //  qx = q.x();
-      //  qy = q.y();
-      //  qz = q.z();
-      //  qw = q.w();
-      //    //ROS_INFO_STREAM("image transform");    
-      // ROS_INFO_STREAM("image_transform->translation\n" << x << "\n" << y << "\n" << z);
-      // ROS_INFO_STREAM("image_transform->quaterion\n"  << qx << "\n" << qy << "\n" << qz << "\n" << qw);
+  //     // Eigen::Matrix3d m = eigenTransform.rotation();
+  //     // Eigen::Vector3d v = eigenTransform.translation();
+  //     // Eigen::Quaterniond q = (Eigen::Quaterniond)eigenTransform.linear();
+  //     // double x, y, z, qx, qy, qz, qw;
+  //     //  x = v.x();
+  //     //  y = v.y();
+  //     //  z = v.z();
+  //     //  qx = q.x();
+  //     //  qy = q.y();
+  //     //  qz = q.z();
+  //     //  qw = q.w();
+  //     //    //ROS_INFO_STREAM("image transform");    
+  //     // ROS_INFO_STREAM("image_transform->translation\n" << x << "\n" << y << "\n" << z);
+  //     // ROS_INFO_STREAM("image_transform->quaterion\n"  << qx << "\n" << qy << "\n" << qz << "\n" << qw);
 
-      ROS_INFO_STREAM("  Transform");
-      pcl::transformPlane(coefficients_image, coefficients, eigenTransform);
-      ROS_INFO_STREAM("    guess plane:" << coefficients->values[0] << ":" << coefficients->values[1] << ":" << coefficients->values[2] << ":" << coefficients->values[3]);
+  //     ROS_INFO_STREAM("  Transform");
+  //     pcl::transformPlane(coefficients_image, coefficients, eigenTransform);
+  //     ROS_INFO_STREAM("    guess plane:" << coefficients->values[0] << ":" << coefficients->values[1] << ":" << coefficients->values[2] << ":" << coefficients->values[3]);
 
-      pcl::PointIndices::Ptr inliers(new pcl::PointIndices());
-      pcl::SACSegmentation<PointT> seg;
-      seg.setOptimizeCoefficients(true);
-      seg.setModelType(pcl::SACMODEL_PLANE);
-      seg.setMethodType(pcl::SAC_RANSAC);
-      seg.setDistanceThreshold(alignToolConfig_.plane_tol);
-      seg.setMaxIterations(100);
-      seg.setInputCloud(cloud_outliers);
-      seg.segment(*inliers, *coefficients);
+  //     pcl::PointIndices::Ptr inliers(new pcl::PointIndices());
+  //     pcl::SACSegmentation<PointT> seg;
+  //     seg.setOptimizeCoefficients(true);
+  //     seg.setModelType(pcl::SACMODEL_PLANE);
+  //     seg.setMethodType(pcl::SAC_RANSAC);
+  //     seg.setDistanceThreshold(alignToolConfig_.plane_tol);
+  //     seg.setMaxIterations(100);
+  //     seg.setInputCloud(cloud_outliers);
+  //     seg.segment(*inliers, *coefficients);
 
-      if(inliers->indices.size() < 30)
-      {
-        ROS_WARN_STREAM("Unable to find plane in cloud segment " << count);
-        break;
-      }
-      else
-      {
-         ROS_INFO_STREAM("  fit points:" << inliers->indices.size() << "/" << cloud_outliers->size());
-         ROS_INFO_STREAM("  fit plane:" << coefficients->values[0] << ":" << coefficients->values[1] << ":" << coefficients->values[2] << ":" << coefficients->values[3]);
-      }
+  //     if(inliers->indices.size() < 30)
+  //     {
+  //       ROS_WARN_STREAM("Unable to find plane in cloud segment " << count);
+  //       break;
+  //     }
+  //     else
+  //     {
+  //        ROS_INFO_STREAM("  fit points:" << inliers->indices.size() << "/" << cloud_outliers->size());
+  //        ROS_INFO_STREAM("  fit plane:" << coefficients->values[0] << ":" << coefficients->values[1] << ":" << coefficients->values[2] << ":" << coefficients->values[3]);
+  //     }
 
-    // Project the inliers on the plane
-      pcl::ProjectInliers<PointT> proj;
-      proj.setModelType(pcl::SACMODEL_PLANE);
-      proj.setInputCloud(cloud_outliers);
-      proj.setModelCoefficients(coefficients);
-      proj.filter(*cloud_plane);
-      float mag = sqrt(pow(coefficients->values[0], 2) + pow(coefficients->values[1], 2)
-        + pow(coefficients->values[2], 2));
-      float sign = 1;
-      // if(coefficients->values[0] > 0) sign = -1;  //Vector should always point back toward camera 
-      point_normal.x = sign*coefficients->values[0]/mag;
-      point_normal.y = sign*coefficients->values[1]/mag;
-      point_normal.z = sign*coefficients->values[2]/mag;
-      ROS_INFO_STREAM("Plane Points: " << cloud_plane->size());
+  //   // Project the inliers on the plane
+  //     pcl::ProjectInliers<PointT> proj;
+  //     proj.setModelType(pcl::SACMODEL_PLANE);
+  //     proj.setInputCloud(cloud_outliers);
+  //     proj.setModelCoefficients(coefficients);
+  //     proj.filter(*cloud_plane);
+  //     float mag = sqrt(pow(coefficients->values[0], 2) + pow(coefficients->values[1], 2)
+  //       + pow(coefficients->values[2], 2));
+  //     float sign = 1;
+  //     // if(coefficients->values[0] > 0) sign = -1;  //Vector should always point back toward camera 
+  //     point_normal.x = sign*coefficients->values[0]/mag;
+  //     point_normal.y = sign*coefficients->values[1]/mag;
+  //     point_normal.z = sign*coefficients->values[2]/mag;
+  //     ROS_INFO_STREAM("Plane Points: " << cloud_plane->size());
 
-      // Publish the cloud
-      sensor_msgs::PointCloud2 cloud_final;
-      pcl::toROSMsg(*cloud_plane, cloud_final);
-      output_cloud_pub_.publish(cloud_final);
-
-
-      // create a visualization object
-      // pcl::PointCloud<pcl::PointXYZ>::Ptr view_points (new pcl::PointCloud<pcl::PointXYZ>);
-      // pcl::copyPointCloud<PointT>(*cloud_plane, *view_points);
-
-      // boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer;
-      //  viewer = Multi_Sensor_Alignment::simpleVis(view_points);
-      //  viewer->spin();
+  //     // Publish the cloud
+  //     sensor_msgs::PointCloud2 cloud_final;
+  //     pcl::toROSMsg(*cloud_plane, cloud_final);
+  //     output_cloud_pub_.publish(cloud_final);
 
 
-      //Extract the outliers for next pass (i.e. current plane does not work out to be the board)
-      ROS_DEBUG_STREAM("Extract outliers");
-      pcl::ExtractIndices<PointT> extract;
-      extract.setInputCloud(cloud_outliers);
-      extract.setIndices(inliers);
-      extract.setNegative (true);
-      extract.filter(*cloud_outliers);
+  //     // create a visualization object
+  //     // pcl::PointCloud<pcl::PointXYZ>::Ptr view_points (new pcl::PointCloud<pcl::PointXYZ>);
+  //     // pcl::copyPointCloud<PointT>(*cloud_plane, *view_points);
 
-    //Use Convex hull to find edges points of plane
-      ROS_DEBUG_STREAM("Hull");
-      pcl::ConcaveHull<PointT> chull;
-      chull.setAlpha(board_height_/1000.0/1.0);
-      chull.setInputCloud(cloud_plane);
-      chull.reconstruct (*cloud_hull);
-      if(cloud_hull->points.size() < 15)
-      {
-        ROS_WARN_STREAM("Unable to find sufficient edge points on plane " << count);
-        continue;
-      }
-      ROS_DEBUG_STREAM("Hull Points: " << cloud_hull->size());
+  //     // boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer;
+  //     //  viewer = Multi_Sensor_Alignment::simpleVis(view_points);
+  //     //  viewer->spin();
 
-      //Find key points (those with greatest y/z values). These should be the closest points to the corners. 
-      // ToDo there is an underlying assumption that the working frame is X-forward and Z-up, really need a more robust solution
-      //Start and bottom and go clockwise to organize the points
-      ROS_DEBUG_STREAM("Key Points");
-      pcl::PointCloud<PointT> key_points;
-      for(int i = 0; i < 4; i++) key_points.push_back(cloud_hull->points[0]);
-      for(int i = 0; i < cloud_hull->size(); i++)
-      {
-        if(cloud_hull->points[i].z < key_points.points[0].z) key_points.points[0] = cloud_hull->points[i];
-        if(cloud_hull->points[i].y < key_points.points[1].y) key_points.points[1] = cloud_hull->points[i];
-        if(cloud_hull->points[i].z > key_points.points[2].z) key_points.points[2] = cloud_hull->points[i];
-        if(cloud_hull->points[i].y > key_points.points[3].y) key_points.points[3] = cloud_hull->points[i];
-      }
-      ROS_DEBUG_STREAM("Key Points: " << key_points.points[0] << key_points.points[1] << key_points.points[2] << key_points.points[3]);
 
-      //Sort into edges using key points as boundaries
-      ROS_DEBUG_STREAM("Group Edges");
-      pcl::PointCloud<PointT>::Ptr downright(new pcl::PointCloud<PointT>);
-      pcl::PointCloud<PointT>::Ptr upright(new pcl::PointCloud<PointT>);
-      pcl::PointCloud<PointT>::Ptr upleft(new pcl::PointCloud<PointT>);
-      pcl::PointCloud<PointT>::Ptr downleft(new pcl::PointCloud<PointT>);
-      for(int i = 0; i < cloud_hull->size(); i++)
-      {
-        double plane_tol = alignToolConfig_.plane_tol;
-        if( (cloud_hull->points[i].y < (key_points.points[0].y))            && (cloud_hull->points[i].z < (key_points.points[1].z)) 
-         && (cloud_hull->points[i].y > (key_points.points[1].y+ plane_tol)) && (cloud_hull->points[i].z > (key_points.points[0].z + plane_tol))) { downright->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
-        if( (cloud_hull->points[i].y < (key_points.points[2].y))            && (cloud_hull->points[i].z > (key_points.points[1].z)) 
-         && (cloud_hull->points[i].y > (key_points.points[1].y+ plane_tol)) && (cloud_hull->points[i].z < (key_points.points[2].z - plane_tol))) { upright->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
-        if( (cloud_hull->points[i].y > (key_points.points[2].y))            && (cloud_hull->points[i].z > (key_points.points[3].z)) 
-         && (cloud_hull->points[i].y < (key_points.points[3].y- plane_tol)) && (cloud_hull->points[i].z < (key_points.points[2].z - plane_tol))) { upleft->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
-        if( (cloud_hull->points[i].y > (key_points.points[0].y))            && (cloud_hull->points[i].z < (key_points.points[3].z)) 
-         && (cloud_hull->points[i].y < (key_points.points[3].y- plane_tol)) && (cloud_hull->points[i].z > (key_points.points[0].z + plane_tol))) { downleft->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
-      }
-      ROS_INFO_STREAM("Edge Points: " << downright->points.size() << "," << upright->points.size() << "," << upleft->points.size() << "," << downleft->points.size());
-      if((downright->points.size() < 3) || (upright->points.size() < 3) || (upleft->points.size() < 3) || (downleft->points.size() < 3))
-      {
-        ROS_WARN_STREAM("Insufficient points along one edge of plane " << count);
-        continue;
-      }
+  //     //Extract the outliers for next pass (i.e. current plane does not work out to be the board)
+  //     ROS_DEBUG_STREAM("Extract outliers");
+  //     pcl::ExtractIndices<PointT> extract;
+  //     extract.setInputCloud(cloud_outliers);
+  //     extract.setIndices(inliers);
+  //     extract.setNegative (true);
+  //     extract.filter(*cloud_outliers);
 
-      //Fit lines through the the edge points
-      ROS_DEBUG_STREAM("Fit Lines");
-      std::vector<pcl::ModelCoefficients::Ptr> l_coefficients;
-      std::vector<pcl::PointIndices::Ptr> l_inliers;
-      pcl::PointCloud<PointT>::Ptr hull_outliers(new pcl::PointCloud<PointT>(*cloud_hull));
+  //   //Use Convex hull to find edges points of plane
+  //     ROS_DEBUG_STREAM("Hull");
+  //     pcl::ConcaveHull<PointT> chull;
+  //     chull.setAlpha(board_height_/1000.0/1.0);
+  //     chull.setInputCloud(cloud_plane);
+  //     chull.reconstruct (*cloud_hull);
+  //     if(cloud_hull->points.size() < 15)
+  //     {
+  //       ROS_WARN_STREAM("Unable to find sufficient edge points on plane " << count);
+  //       continue;
+  //     }
+  //     ROS_DEBUG_STREAM("Hull Points: " << cloud_hull->size());
 
-      seg.setModelType(pcl::SACMODEL_LINE);
-      seg.setMethodType(pcl::SAC_RANSAC);
-      seg.setDistanceThreshold(alignToolConfig_.plane_tol*2);
-      seg.setOptimizeCoefficients(true);
+  //     //Find key points (those with greatest y/z values). These should be the closest points to the corners. 
+  //     // ToDo there is an underlying assumption that the working frame is X-forward and Z-up, really need a more robust solution
+  //     //Start and bottom and go clockwise to organize the points
+  //     ROS_DEBUG_STREAM("Key Points");
+  //     pcl::PointCloud<PointT> key_points;
+  //     for(int i = 0; i < 4; i++) key_points.push_back(cloud_hull->points[0]);
+  //     for(int i = 0; i < cloud_hull->size(); i++)
+  //     {
+  //       if(cloud_hull->points[i].z < key_points.points[0].z) key_points.points[0] = cloud_hull->points[i];
+  //       if(cloud_hull->points[i].y < key_points.points[1].y) key_points.points[1] = cloud_hull->points[i];
+  //       if(cloud_hull->points[i].z > key_points.points[2].z) key_points.points[2] = cloud_hull->points[i];
+  //       if(cloud_hull->points[i].y > key_points.points[3].y) key_points.points[3] = cloud_hull->points[i];
+  //     }
+  //     ROS_DEBUG_STREAM("Key Points: " << key_points.points[0] << key_points.points[1] << key_points.points[2] << key_points.points[3]);
+
+  //     //Sort into edges using key points as boundaries
+  //     ROS_DEBUG_STREAM("Group Edges");
+  //     pcl::PointCloud<PointT>::Ptr downright(new pcl::PointCloud<PointT>);
+  //     pcl::PointCloud<PointT>::Ptr upright(new pcl::PointCloud<PointT>);
+  //     pcl::PointCloud<PointT>::Ptr upleft(new pcl::PointCloud<PointT>);
+  //     pcl::PointCloud<PointT>::Ptr downleft(new pcl::PointCloud<PointT>);
+  //     for(int i = 0; i < cloud_hull->size(); i++)
+  //     {
+  //       double plane_tol = alignToolConfig_.plane_tol;
+  //       if( (cloud_hull->points[i].y < (key_points.points[0].y))            && (cloud_hull->points[i].z < (key_points.points[1].z)) 
+  //        && (cloud_hull->points[i].y > (key_points.points[1].y+ plane_tol)) && (cloud_hull->points[i].z > (key_points.points[0].z + plane_tol))) { downright->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
+  //       if( (cloud_hull->points[i].y < (key_points.points[2].y))            && (cloud_hull->points[i].z > (key_points.points[1].z)) 
+  //        && (cloud_hull->points[i].y > (key_points.points[1].y+ plane_tol)) && (cloud_hull->points[i].z < (key_points.points[2].z - plane_tol))) { upright->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
+  //       if( (cloud_hull->points[i].y > (key_points.points[2].y))            && (cloud_hull->points[i].z > (key_points.points[3].z)) 
+  //        && (cloud_hull->points[i].y < (key_points.points[3].y- plane_tol)) && (cloud_hull->points[i].z < (key_points.points[2].z - plane_tol))) { upleft->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
+  //       if( (cloud_hull->points[i].y > (key_points.points[0].y))            && (cloud_hull->points[i].z < (key_points.points[3].z)) 
+  //        && (cloud_hull->points[i].y < (key_points.points[3].y- plane_tol)) && (cloud_hull->points[i].z > (key_points.points[0].z + plane_tol))) { downleft->push_back(cloud_hull->points[i]); cloud_combined->push_back(cloud_hull->points[i]); }
+  //     }
+  //     ROS_INFO_STREAM("Edge Points: " << downright->points.size() << "," << upright->points.size() << "," << upleft->points.size() << "," << downleft->points.size());
+  //     if((downright->points.size() < 3) || (upright->points.size() < 3) || (upleft->points.size() < 3) || (downleft->points.size() < 3))
+  //     {
+  //       ROS_WARN_STREAM("Insufficient points along one edge of plane " << count);
+  //       continue;
+  //     }
+
+  //     //Fit lines through the the edge points
+  //     ROS_DEBUG_STREAM("Fit Lines");
+  //     std::vector<pcl::ModelCoefficients::Ptr> l_coefficients;
+  //     std::vector<pcl::PointIndices::Ptr> l_inliers;
+  //     pcl::PointCloud<PointT>::Ptr hull_outliers(new pcl::PointCloud<PointT>(*cloud_hull));
+
+  //     seg.setModelType(pcl::SACMODEL_LINE);
+  //     seg.setMethodType(pcl::SAC_RANSAC);
+  //     seg.setDistanceThreshold(alignToolConfig_.plane_tol*2);
+  //     seg.setOptimizeCoefficients(true);
       
-      pcl::ModelCoefficients::Ptr a_coefficients (new pcl::ModelCoefficients);
-      pcl::PointIndices::Ptr a_inliers (new pcl::PointIndices);
-      seg.setInputCloud(downright);
-      seg.segment (*a_inliers, *a_coefficients);
-      l_coefficients.push_back(a_coefficients);
-      //ROS_DEBUG_STREAM("downright: " << a_coefficients->values.size());
+  //     pcl::ModelCoefficients::Ptr a_coefficients (new pcl::ModelCoefficients);
+  //     pcl::PointIndices::Ptr a_inliers (new pcl::PointIndices);
+  //     seg.setInputCloud(downright);
+  //     seg.segment (*a_inliers, *a_coefficients);
+  //     l_coefficients.push_back(a_coefficients);
+  //     //ROS_DEBUG_STREAM("downright: " << a_coefficients->values.size());
 
       
-      pcl::ModelCoefficients::Ptr b_coefficients (new pcl::ModelCoefficients);
-      pcl::PointIndices::Ptr b_inliers (new pcl::PointIndices);
-      seg.setInputCloud(upright);
-      seg.segment (*b_inliers, *b_coefficients);
-      l_coefficients.push_back(b_coefficients);
-      //ROS_DEBUG_STREAM("upright: " << b_coefficients->values.size());
+  //     pcl::ModelCoefficients::Ptr b_coefficients (new pcl::ModelCoefficients);
+  //     pcl::PointIndices::Ptr b_inliers (new pcl::PointIndices);
+  //     seg.setInputCloud(upright);
+  //     seg.segment (*b_inliers, *b_coefficients);
+  //     l_coefficients.push_back(b_coefficients);
+  //     //ROS_DEBUG_STREAM("upright: " << b_coefficients->values.size());
 
-      pcl::ModelCoefficients::Ptr c_coefficients (new pcl::ModelCoefficients);
-      pcl::PointIndices::Ptr c_inliers (new pcl::PointIndices);
-      seg.setInputCloud(upleft);
-      seg.segment (*c_inliers, *c_coefficients);
-      l_coefficients.push_back(c_coefficients);
-      //ROS_DEBUG_STREAM("upleft: " << c_coefficients->values.size());
+  //     pcl::ModelCoefficients::Ptr c_coefficients (new pcl::ModelCoefficients);
+  //     pcl::PointIndices::Ptr c_inliers (new pcl::PointIndices);
+  //     seg.setInputCloud(upleft);
+  //     seg.segment (*c_inliers, *c_coefficients);
+  //     l_coefficients.push_back(c_coefficients);
+  //     //ROS_DEBUG_STREAM("upleft: " << c_coefficients->values.size());
 
-      pcl::ModelCoefficients::Ptr d_coefficients (new pcl::ModelCoefficients);
-      pcl::PointIndices::Ptr d_inliers (new pcl::PointIndices);
-      seg.setInputCloud(downleft);  // might need to clear inliers and coefficients
-      seg.segment (*d_inliers, *d_coefficients);
-      l_coefficients.push_back(d_coefficients);
-      //ROS_DEBUG_STREAM("downleft: " << d_coefficients->values.size());
+  //     pcl::ModelCoefficients::Ptr d_coefficients (new pcl::ModelCoefficients);
+  //     pcl::PointIndices::Ptr d_inliers (new pcl::PointIndices);
+  //     seg.setInputCloud(downleft);  // might need to clear inliers and coefficients
+  //     seg.segment (*d_inliers, *d_coefficients);
+  //     l_coefficients.push_back(d_coefficients);
+  //     //ROS_DEBUG_STREAM("downleft: " << d_coefficients->values.size());
 
-    //Find board corners as line intersections
-      ROS_DEBUG_STREAM("Find Intersections");
-      Eigen::Vector4f Point_l;
-      pcl::PointXYZ basic_point; // intersection points stored here
-      double plane_tol = alignToolConfig_.plane_tol;
-      if(pcl::lineWithLineIntersection(*l_coefficients[3], *l_coefficients[0], Point_l, plane_tol*plane_tol/4.))
-      {
-        basic_point.x = Point_l[0];
-        basic_point.y = Point_l[1];
-        basic_point.z = Point_l[2];
-        cloud_corner->points.push_back(basic_point);
-        ROS_DEBUG_STREAM("point 1=" << basic_point);
-      }
-      else
-      {
-        ROS_WARN_STREAM("Unable to find corner point 1 in plane " << count);
-        continue;
-      }
+  //   //Find board corners as line intersections
+  //     ROS_DEBUG_STREAM("Find Intersections");
+  //     Eigen::Vector4f Point_l;
+  //     pcl::PointXYZ basic_point; // intersection points stored here
+  //     double plane_tol = alignToolConfig_.plane_tol;
+  //     if(pcl::lineWithLineIntersection(*l_coefficients[3], *l_coefficients[0], Point_l, plane_tol*plane_tol/4.))
+  //     {
+  //       basic_point.x = Point_l[0];
+  //       basic_point.y = Point_l[1];
+  //       basic_point.z = Point_l[2];
+  //       cloud_corner->points.push_back(basic_point);
+  //       ROS_DEBUG_STREAM("point 1=" << basic_point);
+  //     }
+  //     else
+  //     {
+  //       ROS_WARN_STREAM("Unable to find corner point 1 in plane " << count);
+  //       continue;
+  //     }
       
-      if(pcl::lineWithLineIntersection(*l_coefficients[0], *l_coefficients[1], Point_l, plane_tol*plane_tol/4.))
-      {
-        basic_point.x = Point_l[0];
-        basic_point.y = Point_l[1];
-        basic_point.z = Point_l[2];
-        cloud_corner->points.push_back(basic_point);
-        ROS_DEBUG_STREAM("point 2=" << basic_point);
-      }
-            else
-      {
-        ROS_WARN_STREAM("Unable to find corner point 2 in plane " << count);
-        continue;
-      }
+  //     if(pcl::lineWithLineIntersection(*l_coefficients[0], *l_coefficients[1], Point_l, plane_tol*plane_tol/4.))
+  //     {
+  //       basic_point.x = Point_l[0];
+  //       basic_point.y = Point_l[1];
+  //       basic_point.z = Point_l[2];
+  //       cloud_corner->points.push_back(basic_point);
+  //       ROS_DEBUG_STREAM("point 2=" << basic_point);
+  //     }
+  //           else
+  //     {
+  //       ROS_WARN_STREAM("Unable to find corner point 2 in plane " << count);
+  //       continue;
+  //     }
 
-      if(pcl::lineWithLineIntersection(*l_coefficients[1], *l_coefficients[2], Point_l, plane_tol*plane_tol/4.))
-      {
-        basic_point.x = Point_l[0];
-        basic_point.y = Point_l[1];
-        basic_point.z = Point_l[2];
-        cloud_corner->points.push_back(basic_point);
-        ROS_DEBUG_STREAM("point 3=" << basic_point);
-      }
-      else
-      {
-        ROS_WARN_STREAM("Unable to find corner point 3 in plane " << count);
-        continue;
-      }
-      if(pcl::lineWithLineIntersection(*l_coefficients[2], *l_coefficients[3], Point_l, plane_tol*plane_tol/4.))
-      {
-        basic_point.x = Point_l[0];
-        basic_point.y = Point_l[1];
-        basic_point.z = Point_l[2];
-        cloud_corner->points.push_back(basic_point);
-        ROS_DEBUG_STREAM("point 4=" << basic_point);
-      }
-      else
-      {
-        ROS_WARN_STREAM("Unable to find corner point 4 in plane " << count);
-        continue;
-      }
+  //     if(pcl::lineWithLineIntersection(*l_coefficients[1], *l_coefficients[2], Point_l, plane_tol*plane_tol/4.))
+  //     {
+  //       basic_point.x = Point_l[0];
+  //       basic_point.y = Point_l[1];
+  //       basic_point.z = Point_l[2];
+  //       cloud_corner->points.push_back(basic_point);
+  //       ROS_DEBUG_STREAM("point 3=" << basic_point);
+  //     }
+  //     else
+  //     {
+  //       ROS_WARN_STREAM("Unable to find corner point 3 in plane " << count);
+  //       continue;
+  //     }
+  //     if(pcl::lineWithLineIntersection(*l_coefficients[2], *l_coefficients[3], Point_l, plane_tol*plane_tol/4.))
+  //     {
+  //       basic_point.x = Point_l[0];
+  //       basic_point.y = Point_l[1];
+  //       basic_point.z = Point_l[2];
+  //       cloud_corner->points.push_back(basic_point);
+  //       ROS_DEBUG_STREAM("point 4=" << basic_point);
+  //     }
+  //     else
+  //     {
+  //       ROS_WARN_STREAM("Unable to find corner point 4 in plane " << count);
+  //       continue;
+  //     }
 
-      // Check length of diagonals
-      float diagonal1x = cloud_corner->points[2].x-cloud_corner->points[0].x;
-      float diagonal1y = cloud_corner->points[2].y-cloud_corner->points[0].y;
-      float diagonal1z = cloud_corner->points[2].z-cloud_corner->points[0].z;
-      float diagonal2x = cloud_corner->points[3].x-cloud_corner->points[1].x;
-      float diagonal2y = cloud_corner->points[3].y-cloud_corner->points[1].y;
-      float diagonal2z = cloud_corner->points[3].z-cloud_corner->points[1].z;
-      float actual_length1 = diagonal1x*diagonal1x + diagonal1y*diagonal1y + diagonal1z*diagonal1z;
-      float actual_length2 = diagonal2x*diagonal2x + diagonal2y*diagonal2y + diagonal2z*diagonal2z;
-      float expected_length = board_width_*board_width_ + board_height_*board_height_;
-      if(actual_length1 < 0.9*expected_length || actual_length1 > 1.1*expected_length  ||
-         actual_length2 < 0.9*expected_length || actual_length2 > 1.1*expected_length)
-      {
-        ROS_WARN_STREAM("Board dimensions do not work in plane " << count);
-        continue;
-      } 
+  //     // Check length of diagonals
+  //     float diagonal1x = cloud_corner->points[2].x-cloud_corner->points[0].x;
+  //     float diagonal1y = cloud_corner->points[2].y-cloud_corner->points[0].y;
+  //     float diagonal1z = cloud_corner->points[2].z-cloud_corner->points[0].z;
+  //     float diagonal2x = cloud_corner->points[3].x-cloud_corner->points[1].x;
+  //     float diagonal2y = cloud_corner->points[3].y-cloud_corner->points[1].y;
+  //     float diagonal2z = cloud_corner->points[3].z-cloud_corner->points[1].z;
+  //     float actual_length1 = diagonal1x*diagonal1x + diagonal1y*diagonal1y + diagonal1z*diagonal1z;
+  //     float actual_length2 = diagonal2x*diagonal2x + diagonal2y*diagonal2y + diagonal2z*diagonal2z;
+  //     float expected_length = board_width_*board_width_ + board_height_*board_height_;
+  //     if(actual_length1 < 0.9*expected_length || actual_length1 > 1.1*expected_length  ||
+  //        actual_length2 < 0.9*expected_length || actual_length2 > 1.1*expected_length)
+  //     {
+  //       ROS_WARN_STREAM("Board dimensions do not work in plane " << count);
+  //       continue;
+  //     } 
       
-      //Find center from corner diagonals
-      pcl::PointXYZ center1;
-      center1.x = (cloud_corner->points[2].x+cloud_corner->points[0].x)/2.0;
-      center1.y = (cloud_corner->points[2].y+cloud_corner->points[0].y)/2.0;
-      center1.z = (cloud_corner->points[2].z+cloud_corner->points[0].z)/2.0;
-      pcl::PointXYZ center2;
-      center2.x = (cloud_corner->points[3].x+cloud_corner->points[1].x)/2.0;
-      center2.y = (cloud_corner->points[3].y+cloud_corner->points[1].y)/2.0;
-      center2.z = (cloud_corner->points[3].z+cloud_corner->points[1].z)/2.0;
-      if(((center1.x - center2.x)*(center1.x - center2.x) +
-          (center1.y - center2.y)*(center1.y - center2.y) + 
-          (center1.z - center2.z)*(center1.z - center2.z)) > plane_tol*plane_tol);
-      {
-        ROS_WARN_STREAM("Board diagonals do not cross on plane " << count);
-        continue;
-      } 
+  //     //Find center from corner diagonals
+  //     pcl::PointXYZ center1;
+  //     center1.x = (cloud_corner->points[2].x+cloud_corner->points[0].x)/2.0;
+  //     center1.y = (cloud_corner->points[2].y+cloud_corner->points[0].y)/2.0;
+  //     center1.z = (cloud_corner->points[2].z+cloud_corner->points[0].z)/2.0;
+  //     pcl::PointXYZ center2;
+  //     center2.x = (cloud_corner->points[3].x+cloud_corner->points[1].x)/2.0;
+  //     center2.y = (cloud_corner->points[3].y+cloud_corner->points[1].y)/2.0;
+  //     center2.z = (cloud_corner->points[3].z+cloud_corner->points[1].z)/2.0;
+  //     if(((center1.x - center2.x)*(center1.x - center2.x) +
+  //         (center1.y - center2.y)*(center1.y - center2.y) + 
+  //         (center1.z - center2.z)*(center1.z - center2.z)) > plane_tol*plane_tol);
+  //     {
+  //       ROS_WARN_STREAM("Board diagonals do not cross on plane " << count);
+  //       continue;
+  //     } 
 
-      basic_point.x = (center1.x + center2.x)/2.0;
-      basic_point.y = (center1.y + center2.y)/2.0;
-      basic_point.z = (center1.z + center2.z)/2.0;
-      cloud_corner->points.push_back(basic_point);
-      ROS_DEBUG_STREAM("point 5=" << basic_point);
+  //     basic_point.x = (center1.x + center2.x)/2.0;
+  //     basic_point.y = (center1.y + center2.y)/2.0;
+  //     basic_point.z = (center1.z + center2.z)/2.0;
+  //     cloud_corner->points.push_back(basic_point);
+  //     ROS_DEBUG_STREAM("point 5=" << basic_point);
       
-      break;
-    }
+  //     break;
+  //   }
+  
+  // // Publish the cloud
+  //   sensor_msgs::PointCloud2 cloud_final;
+  //   if(cloud_corner->points.size() == 5) pcl::toROSMsg(*cloud_combined, cloud_final);
+  //   else pcl::toROSMsg(*cloud_hull, cloud_final);
+  //   ROS_DEBUG_STREAM("Publishing Cloud");
+  //   output_cloud_pub_.publish(cloud_final);
 
-  // Publish the cloud
-    // sensor_msgs::PointCloud2 cloud_final;
-    // if(cloud_corner->points.size() == 5) pcl::toROSMsg(*cloud_combined, cloud_final);
-    // else pcl::toROSMsg(*cloud_hull, cloud_final);
-    // ROS_DEBUG_STREAM("Publishing Cloud");
-    // output_cloud_pub_.publish(cloud_final);
+  //   if(cloud_corner->points.size() != 5) return;
 
-    if(cloud_corner->points.size() != 5) return;
-
-  //Turn results into a pose
-    Eigen::Vector3d xy_normal_vector, board_normal_vector, plane_rotation_vector;
-    xy_normal_vector[0] = 0.0;
-    xy_normal_vector[1] = 0.0;
-    xy_normal_vector[2] = 1.0;
-    board_normal_vector[0] = point_normal.x;
-    board_normal_vector[1] = point_normal.y;
-    board_normal_vector[2] = point_normal.z;
-    board_normal_vector.normalize();
-    plane_rotation_vector = xy_normal_vector.cross(board_normal_vector);
-    double plane_rotation_angle = atan2(plane_rotation_vector.norm(), xy_normal_vector.dot(board_normal_vector));
-    plane_rotation_vector.normalize();
+  // //Turn results into a pose
+  //   Eigen::Vector3d xy_normal_vector, board_normal_vector, plane_rotation_vector;
+  //   xy_normal_vector[0] = 0.0;
+  //   xy_normal_vector[1] = 0.0;
+  //   xy_normal_vector[2] = 1.0;
+  //   board_normal_vector[0] = point_normal.x;
+  //   board_normal_vector[1] = point_normal.y;
+  //   board_normal_vector[2] = point_normal.z;
+  //   board_normal_vector.normalize();
+  //   plane_rotation_vector = xy_normal_vector.cross(board_normal_vector);
+  //   double plane_rotation_angle = atan2(plane_rotation_vector.norm(), xy_normal_vector.dot(board_normal_vector));
+  //   plane_rotation_vector.normalize();
  
-    Eigen::Affine3d cb_pose = Eigen::Affine3d::Identity();
-    cb_pose = Eigen::AngleAxisd(plane_rotation_angle, plane_rotation_vector);
-    cb_pose(0,3) = cloud_corner->points[4].x;
-    cb_pose(1,3) = cloud_corner->points[4].y;
-    cb_pose(2,3) = cloud_corner->points[4].z;
-    //ROS_INFO_STREAM("corners camera frame" << "\n" << cloud_corner->points[0] << "\n" << cloud_corner->points[1] << "\n" << cloud_corner->points[2] << "\n" << cloud_corner->points[3] << "\n" << cloud_corner->points[4]);
+  //   Eigen::Affine3d cb_pose = Eigen::Affine3d::Identity();
+  //   cb_pose = Eigen::AngleAxisd(plane_rotation_angle, plane_rotation_vector);
+  //   cb_pose(0,3) = cloud_corner->points[4].x;
+  //   cb_pose(1,3) = cloud_corner->points[4].y;
+  //   cb_pose(2,3) = cloud_corner->points[4].z;
+  //   //ROS_INFO_STREAM("corners camera frame" << "\n" << cloud_corner->points[0] << "\n" << cloud_corner->points[1] << "\n" << cloud_corner->points[2] << "\n" << cloud_corner->points[3] << "\n" << cloud_corner->points[4]);
 
-  // The transform, cb_pose, as it stands will transform into the plane of the board.  
-    // However, we are still lacking the final orientation about the normal of this plane.
-    // We need another rotation transform to align the board edges with the xy axis of the board coordinate system.
-    geometry_msgs::TransformStamped inverse = tf2::eigenToTransform(cb_pose);
-    tf2::Transform transform_tf; tf2::convert(inverse.transform, transform_tf);
-    tf2::Transform inverse_tf = transform_tf.inverse();
-    tf2::convert(inverse_tf, inverse.transform);
-    sensor_msgs::PointCloud2 corners_xy; pcl::toROSMsg(*cloud_corner, corners_xy);
-    tf2::doTransform(corners_xy, corners_xy, inverse);
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_corner_xy(new pcl::PointCloud<pcl::PointXYZ>);
-    pcl::fromROSMsg(corners_xy, *cloud_corner_xy);
+  // // The transform, cb_pose, as it stands will transform into the plane of the board.  
+  //   // However, we are still lacking the final orientation about the normal of this plane.
+  //   // We need another rotation transform to align the board edges with the xy axis of the board coordinate system.
+  //   geometry_msgs::TransformStamped inverse = tf2::eigenToTransform(cb_pose);
+  //   tf2::Transform transform_tf; tf2::convert(inverse.transform, transform_tf);
+  //   tf2::Transform inverse_tf = transform_tf.inverse();
+  //   tf2::convert(inverse_tf, inverse.transform);
+  //   sensor_msgs::PointCloud2 corners_xy; pcl::toROSMsg(*cloud_corner, corners_xy);
+  //   tf2::doTransform(corners_xy, corners_xy, inverse);
+  //   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_corner_xy(new pcl::PointCloud<pcl::PointXYZ>);
+  //   pcl::fromROSMsg(corners_xy, *cloud_corner_xy);
     
-    //ROS_INFO_STREAM("corners board unoriented" << "\n" << cloud_corner_xy->points[0] << "\n" << cloud_corner_xy->points[1] << "\n" << cloud_corner_xy->points[2] << "\n" << cloud_corner_xy->points[3] << "\n" << cloud_corner_xy->points[4]);
+  //   //ROS_INFO_STREAM("corners board unoriented" << "\n" << cloud_corner_xy->points[0] << "\n" << cloud_corner_xy->points[1] << "\n" << cloud_corner_xy->points[2] << "\n" << cloud_corner_xy->points[3] << "\n" << cloud_corner_xy->points[4]);
     
-    // Additional rotation vector
-    Eigen::Vector3d x_vector, orient_rotation;
-    x_vector[0] = 1.0;
-    x_vector[1] = 0.0;
-    x_vector[2] = 0.0;
-    Eigen::Vector4d rotation_angles(0.0,0.0,0.0,0.0);
-    //ROS_INFO_STREAM("corner angles");
-    // calculate rotations for all edges and take average
-    cloud_corner_xy->points[4] = cloud_corner_xy->points[0]; //copy first value to end of list for easy loopback.
-    for(int i = 0; i < 4; i++)
-    {
-      Eigen::Vector3d edge_vector, rotation_vector;
-      edge_vector[0] = std::abs(cloud_corner_xy->points[i+1].x - cloud_corner_xy->points[i].x);
-      edge_vector[1] = std::abs(cloud_corner_xy->points[i+1].y - cloud_corner_xy->points[i].y);
-      edge_vector[2] = std::abs(cloud_corner_xy->points[i+1].z - cloud_corner_xy->points[i].z);
-      rotation_vector = x_vector.cross(edge_vector);
-      rotation_angles[i] = atan2(rotation_vector.norm(), x_vector.dot(edge_vector));
-      if(rotation_angles[i] > +PI/4) rotation_angles[i] = +PI/2 - rotation_angles[i];
-      if(rotation_angles[i] < -PI/4) rotation_angles[i] = -PI/2 - rotation_angles[i];
-      // ROS_INFO_STREAM(rotation_angles[i]*180.0/PI);
-    }
-     //Update Transform
-    cb_pose = Eigen::AngleAxisd(PI/2-rotation_angles.mean(), board_normal_vector)
-             *Eigen::AngleAxisd(plane_rotation_angle, plane_rotation_vector);
-    cb_pose(0,3) = cloud_corner->points[4].x;
-    cb_pose(1,3) = cloud_corner->points[4].y;
-    cb_pose(2,3) = cloud_corner->points[4].z;
+  //   // Additional rotation vector
+  //   Eigen::Vector3d x_vector, orient_rotation;
+  //   x_vector[0] = 1.0;
+  //   x_vector[1] = 0.0;
+  //   x_vector[2] = 0.0;
+  //   Eigen::Vector4d rotation_angles(0.0,0.0,0.0,0.0);
+  //   //ROS_INFO_STREAM("corner angles");
+  //   // calculate rotations for all edges and take average
+  //   cloud_corner_xy->points[4] = cloud_corner_xy->points[0]; //copy first value to end of list for easy loopback.
+  //   for(int i = 0; i < 4; i++)
+  //   {
+  //     Eigen::Vector3d edge_vector, rotation_vector;
+  //     edge_vector[0] = std::abs(cloud_corner_xy->points[i+1].x - cloud_corner_xy->points[i].x);
+  //     edge_vector[1] = std::abs(cloud_corner_xy->points[i+1].y - cloud_corner_xy->points[i].y);
+  //     edge_vector[2] = std::abs(cloud_corner_xy->points[i+1].z - cloud_corner_xy->points[i].z);
+  //     rotation_vector = x_vector.cross(edge_vector);
+  //     rotation_angles[i] = atan2(rotation_vector.norm(), x_vector.dot(edge_vector));
+  //     if(rotation_angles[i] > +PI/4) rotation_angles[i] = +PI/2 - rotation_angles[i];
+  //     if(rotation_angles[i] < -PI/4) rotation_angles[i] = -PI/2 - rotation_angles[i];
+  //     // ROS_INFO_STREAM(rotation_angles[i]*180.0/PI);
+  //   }
+  //    //Update Transform
+  //   cb_pose = Eigen::AngleAxisd(PI/2-rotation_angles.mean(), board_normal_vector)
+  //            *Eigen::AngleAxisd(plane_rotation_angle, plane_rotation_vector);
+  //   cb_pose(0,3) = cloud_corner->points[4].x;
+  //   cb_pose(1,3) = cloud_corner->points[4].y;
+  //   cb_pose(2,3) = cloud_corner->points[4].z;
     
-  // Check transform by applying the inverse transform to the points.  
-    // Should end up with all points in x,y plane and symmetric about 0,0.
-    geometry_msgs::TransformStamped inverse2 = tf2::eigenToTransform(cb_pose);
-    tf2::Transform transform_tf2; tf2::convert(inverse2.transform, transform_tf2);
-    tf2::Transform inverse_tf2 = transform_tf2.inverse();
-    tf2::convert(inverse_tf2, inverse2.transform);
-    pcl::toROSMsg(*cloud_corner, corners_xy);
-    tf2::doTransform(corners_xy, corners_xy, inverse2);
-    pcl::fromROSMsg(corners_xy, *cloud_corner_xy);
-    //ROS_INFO_STREAM("corners board frame" << "\n" << cloud_corner_xy->points[0] << "\n" << cloud_corner_xy->points[1] << "\n" << cloud_corner_xy->points[2] << "\n" << cloud_corner_xy->points[3] << "\n" << cloud_corner_xy->points[4]);
+  // // Check transform by applying the inverse transform to the points.  
+  //   // Should end up with all points in x,y plane and symmetric about 0,0.
+  //   geometry_msgs::TransformStamped inverse2 = tf2::eigenToTransform(cb_pose);
+  //   tf2::Transform transform_tf2; tf2::convert(inverse2.transform, transform_tf2);
+  //   tf2::Transform inverse_tf2 = transform_tf2.inverse();
+  //   tf2::convert(inverse_tf2, inverse2.transform);
+  //   pcl::toROSMsg(*cloud_corner, corners_xy);
+  //   tf2::doTransform(corners_xy, corners_xy, inverse2);
+  //   pcl::fromROSMsg(corners_xy, *cloud_corner_xy);
+  //   //ROS_INFO_STREAM("corners board frame" << "\n" << cloud_corner_xy->points[0] << "\n" << cloud_corner_xy->points[1] << "\n" << cloud_corner_xy->points[2] << "\n" << cloud_corner_xy->points[3] << "\n" << cloud_corner_xy->points[4]);
     
-    geometry_msgs::TransformStamped transform = tf2::eigenToTransform(cb_pose);
-    cloud_transform_->transform.translation.x = transform.transform.translation.x;
-    cloud_transform_->transform.translation.y = transform.transform.translation.y;
-    cloud_transform_->transform.translation.z = transform.transform.translation.z;
-    cloud_transform_->transform.rotation = transform.transform.rotation;    
+  //   geometry_msgs::TransformStamped transform = tf2::eigenToTransform(cb_pose);
+  //   cloud_transform_->transform.translation.x = transform.transform.translation.x;
+  //   cloud_transform_->transform.translation.y = transform.transform.translation.y;
+  //   cloud_transform_->transform.translation.z = transform.transform.translation.z;
+  //   cloud_transform_->transform.rotation = transform.transform.rotation;    
 
-    //Visualize the corner points of velodyne board, 4 corners and center
-    visualization_msgs::Marker corners_board;
-    corners_board.header.frame_id = cloud->header.frame_id;
-    corners_board.header.stamp = pcl_conversions::fromPCL(cloud->header.stamp);
-    corners_board.ns = "my_sphere";
-    corners_board.type = visualization_msgs::Marker::SPHERE;
-    corners_board.action = visualization_msgs::Marker::ADD;
-    corners_board.pose.orientation.w = 1.0;
-    corners_board.scale.x = 0.1; corners_board.scale.y = 0.1; corners_board.scale.z = 0.1;
-    corners_board.color.a = 1.0;
-    for (int i = 0; i < cloud_corner->points.size(); i++)
-    {
-      corners_board.pose.position.x = cloud_corner->points[i].x;
-      corners_board.pose.position.y = cloud_corner->points[i].y;
-      corners_board.pose.position.z = cloud_corner->points[i].z;
+  //   //Visualize the corner points of velodyne board, 4 corners and center
+  //   visualization_msgs::Marker corners_board;
+  //   corners_board.header.frame_id = cloud->header.frame_id;
+  //   corners_board.header.stamp = pcl_conversions::fromPCL(cloud->header.stamp);
+  //   corners_board.ns = "my_sphere";
+  //   corners_board.type = visualization_msgs::Marker::SPHERE;
+  //   corners_board.action = visualization_msgs::Marker::ADD;
+  //   corners_board.pose.orientation.w = 1.0;
+  //   corners_board.scale.x = 0.1; corners_board.scale.y = 0.1; corners_board.scale.z = 0.1;
+  //   corners_board.color.a = 1.0;
+  //   for (int i = 0; i < cloud_corner->points.size(); i++)
+  //   {
+  //     corners_board.pose.position.x = cloud_corner->points[i].x;
+  //     corners_board.pose.position.y = cloud_corner->points[i].y;
+  //     corners_board.pose.position.z = cloud_corner->points[i].z;
       
-      corners_board.id = i;
-      if (corners_board.id == 0) {
-        corners_board.color.r = 1.0; corners_board.color.g = 1.0; corners_board.color.b = 0.0; }
-      else if (corners_board.id == 1) {
-        corners_board.color.r = 0.0; corners_board.color.g = 0.0; corners_board.color.b = 1.0; }
-      else if (corners_board.id == 2) {
-        corners_board.color.r = 1.0; corners_board.color.b = 0.0; corners_board.color.g = 0.0; }
-      else if (corners_board.id == 3) {
-        corners_board.color.r = 0.0; corners_board.color.g = 1.0; corners_board.color.b = 0.0;  }
-      else if (corners_board.id == 4) {
-        corners_board.color.r = 1.0; corners_board.color.g = 1.0; corners_board.color.b = 1.0;  }
-      output_marker_pub_.publish(corners_board);
-    }
+  //     corners_board.id = i;
+  //     if (corners_board.id == 0) {
+  //       corners_board.color.r = 1.0; corners_board.color.g = 1.0; corners_board.color.b = 0.0; }
+  //     else if (corners_board.id == 1) {
+  //       corners_board.color.r = 0.0; corners_board.color.g = 0.0; corners_board.color.b = 1.0; }
+  //     else if (corners_board.id == 2) {
+  //       corners_board.color.r = 1.0; corners_board.color.b = 0.0; corners_board.color.g = 0.0; }
+  //     else if (corners_board.id == 3) {
+  //       corners_board.color.r = 0.0; corners_board.color.g = 1.0; corners_board.color.b = 0.0;  }
+  //     else if (corners_board.id == 4) {
+  //       corners_board.color.r = 1.0; corners_board.color.g = 1.0; corners_board.color.b = 1.0;  }
+  //     output_marker_pub_.publish(corners_board);
+  //   }
 
-    // Visualize board normal vector
-    visualization_msgs::Marker normal;
-    normal.header.frame_id = cloud->header.frame_id;
-    normal.header.stamp = pcl_conversions::fromPCL(cloud->header.stamp);
-    normal.ns = "my_normal";
-    normal.id = 12;
-    normal.type = visualization_msgs::Marker::ARROW;
-    normal.action = visualization_msgs::Marker::ADD;
-    normal.scale.x = 0.04; normal.scale.y = 0.06; normal.scale.z = 0.1;
-    normal.color.a = 1.0; normal.color.r = 0.0; normal.color.g = 0.0; normal.color.b = 1.0;
-    geometry_msgs::Point start, end;
-    start.x = cloud_corner->points[4].x;
-    start.y = cloud_corner->points[4].y;
-    start.z = cloud_corner->points[4].z;
-    end.x = start.x + point_normal.x/2;
-    end.y = start.y + point_normal.y/2;
-    end.z = start.z + point_normal.z/2;
-    normal.points.resize(2);
-    normal.points[0].x = start.x;
-    normal.points[0].y = start.y;
-    normal.points[0].z = start.z;
-    normal.points[1].x = end.x;
-    normal.points[1].y = end.y;
-    normal.points[1].z = end.z;
-    output_marker_pub_.publish(normal);
+  //   // Visualize board normal vector
+  //   visualization_msgs::Marker normal;
+  //   normal.header.frame_id = cloud->header.frame_id;
+  //   normal.header.stamp = pcl_conversions::fromPCL(cloud->header.stamp);
+  //   normal.ns = "my_normal";
+  //   normal.id = 12;
+  //   normal.type = visualization_msgs::Marker::ARROW;
+  //   normal.action = visualization_msgs::Marker::ADD;
+  //   normal.scale.x = 0.04; normal.scale.y = 0.06; normal.scale.z = 0.1;
+  //   normal.color.a = 1.0; normal.color.r = 0.0; normal.color.g = 0.0; normal.color.b = 1.0;
+  //   geometry_msgs::Point start, end;
+  //   start.x = cloud_corner->points[4].x;
+  //   start.y = cloud_corner->points[4].y;
+  //   start.z = cloud_corner->points[4].z;
+  //   end.x = start.x + point_normal.x/2;
+  //   end.y = start.y + point_normal.y/2;
+  //   end.z = start.z + point_normal.z/2;
+  //   normal.points.resize(2);
+  //   normal.points[0].x = start.x;
+  //   normal.points[0].y = start.y;
+  //   normal.points[0].z = start.z;
+  //   normal.points[1].x = end.x;
+  //   normal.points[1].y = end.y;
+  //   normal.points[1].z = end.z;
+  //   output_marker_pub_.publish(normal);
 
   }
   // /// Sorts lines by how horizontal they are in the xz plane.  Used to match near horizontal lines to near vertical lines for finding corners by line intersection.

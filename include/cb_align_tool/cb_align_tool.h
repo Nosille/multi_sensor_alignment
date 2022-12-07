@@ -103,8 +103,8 @@ namespace Multi_Sensor_Alignment
     bool reset();
     bool pushTransform();
     void DownsampleCloud(const pcl::PointCloud<PointT> &in_cloud, pcl::PointCloud<PointT> &out_cloud, double in_leaf_size);
-    void ImageTransform(cv::Mat &grey, std::vector<cv::Point2f> &corners);
-    void CloudTransform(pcl::PointCloud<PointT>::Ptr &cloud);
+    void ImageProcessing(cv::Mat &grey, std::vector<cv::Point2f> &chessCorners, pcl::PointCloud<PointT>::Ptr &cloud);
+    void CloudProcessing(pcl::PointCloud<PointT>::Ptr &in_cloud);
     double * convert_to_imgpts(double x, double y, double z);
     // static bool compareLineCoeff(const pcl::ModelCoefficients::Ptr &c1, const pcl::ModelCoefficients::Ptr &c2);
     // static bool comparePoints(const pcl::PointXYZ &p1, const pcl::PointXYZ &p2);
