@@ -33,28 +33,7 @@ Copyright (c) 2017
 #include <sensor_msgs/PointCloud2.h>
 #include <geometry_msgs/TransformStamped.h>
 
-#include <pcl/io/pcd_io.h>
-
-#include <pcl/point_types.h>
-#include <pcl/point_cloud.h>
-#include <pcl/point_representation.h>
-
-#include <pcl_conversions/pcl_conversions.h>
-#include <pcl/PCLPointCloud2.h>
-#include <pcl_ros/point_cloud.h>
-#include <pcl_ros/transforms.h>
-
-#include <pcl/filters/filter.h>
-#include <pcl/search/kdtree.h>
-#include <pcl/kdtree/kdtree_flann.h>
-#include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/conditional_removal.h>
-#include <pcl/features/normal_3d.h>
-
-#include <pcl/registration/icp.h>
-#include <pcl/registration/icp_nl.h>
-#include <pcl/registration/transforms.h>
-#include <pcl/registration/ndt.h>
+#include "icp_common_tools.h"
 
 #include <message_filters/subscriber.h>
 #include <message_filters/synchronizer.h>
@@ -67,12 +46,6 @@ Copyright (c) 2017
 #include "std_msgs/String.h"
 
 using namespace boost::accumulators;
-
-//convenient typedefs
-typedef pcl::PointXYZI PointT;
-typedef pcl::PointCloud<PointT> PointCloud;
-typedef pcl::PointNormal PointNormalT;
-typedef pcl::PointCloud<PointNormalT> PointCloudWithNormals;
 
 /**
  * \brief Cross-registers pointcloud2 topics for use in alignment
@@ -126,7 +99,6 @@ namespace Multi_Sensor_Alignment
 
     static bool AreQuaternionsClose(tf2::Quaternion q1, tf2::Quaternion q2);
     geometry_msgs::Quaternion AverageQuaternion(const geometry_msgs::Quaternion& newRotation);
-    void DownsampleCloud(const pcl::PointCloud<PointT>::Ptr in_cloud, pcl::PointCloud<PointT> &out_cloud, double in_leaf_size);
 
     //service callbacks
     bool freeze0_callback(std_srvs::Empty::Request &req,

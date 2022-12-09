@@ -421,208 +421,24 @@ namespace Multi_Sensor_Alignment
   //Downsample
     pcl::PointCloud<PointT>::Ptr filtered_cloud0(new pcl::PointCloud<PointT>);
     pcl::PointCloud<PointT>::Ptr filtered_cloud1(new pcl::PointCloud<PointT>);
-    DownsampleCloud(cloud0, *filtered_cloud0, alignToolConfig_.VoxelSize);
-    DownsampleCloud(cloud1, *filtered_cloud1, alignToolConfig_.VoxelSize);
+    Multi_Sensor_Alignment::DownsampleCloud(cloud0, filtered_cloud0, alignToolConfig_.VoxelSize,
+      alignToolConfig_.i_min, alignToolConfig_.i_max, 
+      alignToolConfig_.x_min, alignToolConfig_.x_max,
+      alignToolConfig_.y_min, alignToolConfig_.y_max,
+      alignToolConfig_.z_min, alignToolConfig_.z_max);
+    Multi_Sensor_Alignment::DownsampleCloud(cloud1, filtered_cloud1, alignToolConfig_.VoxelSize,
+      alignToolConfig_.i_min, alignToolConfig_.i_max, 
+      alignToolConfig_.x_min, alignToolConfig_.x_max,
+      alignToolConfig_.y_min, alignToolConfig_.y_max,
+      alignToolConfig_.z_min, alignToolConfig_.z_max);
     
     ROS_INFO_STREAM_NAMED(node_name, "\n");
-    
+
   //Perform Registration
-    Eigen::Matrix4f prev;
-    pcl::PointCloud<PointT>::Ptr output_cloud0(new pcl::PointCloud<PointT>);
-    pcl::PointCloud<PointT>::Ptr output_cloud1(new pcl::PointCloud<PointT>);
-
-    // ICP Nonlinear with scaling CorDist
-    if(alignToolConfig_.Method == 0)
-    {
-      // Compute surface normals and curvature
-      PointCloudWithNormals::Ptr points_with_normals0 (new PointCloudWithNormals);
-      PointCloudWithNormals::Ptr points_with_normals1 (new PointCloudWithNormals);
-
-      pcl::NormalEstimation<PointT, PointNormalT> norm_est;
-      pcl::search::KdTree<pcl::PointXYZI>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZI> ());
-      norm_est.setSearchMethod (tree);
-      if(alignToolConfig_.KSearch > 0) norm_est.setKSearch(alignToolConfig_.KSearch);
-      else norm_est.setRadiusSearch(alignToolConfig_.RadiusSearch);
-      
-      norm_est.setInputCloud (filtered_cloud0);
-      norm_est.compute (*points_with_normals0);
-      pcl::copyPointCloud (*filtered_cloud0, *points_with_normals0);
-
-      norm_est.setInputCloud (filtered_cloud1);
-      norm_est.compute (*points_with_normals1);
-      pcl::copyPointCloud (*filtered_cloud1, *points_with_normals1);
-
-      // Align
-      pcl::IterativeClosestPointNonLinear<PointNormalT, PointNormalT> reg;
-      reg.setTransformationEpsilon (alignToolConfig_.Epsilon);
-      // Set the maximum distance between two correspondences (cloud0<->cloud1) to user input
-      // Note: adjust this based on the size of your datasets
-      reg.setMaxCorrespondenceDistance (alignToolConfig_.MaxCorrespondenceDistance);  
-      // Set the first pointcloud as the target
-      reg.setInputTarget (points_with_normals0);
-
-      // Run the optimization in a loop and visualize the results
-      PointCloudWithNormals::Ptr reg_result = points_with_normals1;
-      reg.setMaximumIterations (2);
-      for (int i = 0; i < alignToolConfig_.MaxIterations; ++i)
-      {
-        ROS_DEBUG_STREAM_NAMED(node_name,"Iteration Nr. " << i << " maxCorrespondenceDistance=" << reg.getMaxCorrespondenceDistance () << ".\n");
-
-        // save previous cloud
-        points_with_normals1 = reg_result;
-
-        // Estimate
-        reg.setInputSource (points_with_normals1);
-        reg.align (*reg_result, current_guess_);
-      
-        //accumulate transformation between each Iteration
-        if(reg.hasConverged ())
-        {
-          current_guess_ = reg.getFinalTransformation ();
-
-        //if the difference between this transformation and the previous one
-        //is smaller than the threshold, refine the process by reducing
-        //the maximal correspondence distance
-          if (std::abs ((reg.getLastIncrementalTransformation () - prev).sum ()) < reg.getTransformationEpsilon ())
-                        reg.setMaxCorrespondenceDistance (reg.getMaxCorrespondenceDistance () * 0.99);
-        }
-        
-        prev = reg.getLastIncrementalTransformation();
-      }
-
-      ROS_INFO_STREAM_NAMED(node_name, "ICP Nonlinear Transform converged:" << reg.hasConverged ()
-              << " score: " << reg.getFitnessScore () << " epsilon:" << reg.getTransformationEpsilon());
-
-    }
-    // ICP Nonlinear
-    else if(alignToolConfig_.Method == 1)
-    {
-      // Compute surface normals and curvature
-      PointCloudWithNormals::Ptr points_with_normals0 (new PointCloudWithNormals);
-      PointCloudWithNormals::Ptr points_with_normals1 (new PointCloudWithNormals);
-
-      pcl::NormalEstimation<PointT, PointNormalT> norm_est;
-      pcl::search::KdTree<pcl::PointXYZI>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZI> ());
-      norm_est.setSearchMethod (tree);
-      if(alignToolConfig_.KSearch > 0) norm_est.setKSearch(alignToolConfig_.KSearch);
-      else norm_est.setRadiusSearch(alignToolConfig_.RadiusSearch);
-      
-      norm_est.setInputCloud (filtered_cloud0);
-      norm_est.compute (*points_with_normals0);
-      pcl::copyPointCloud (*filtered_cloud0, *points_with_normals0);
-
-      norm_est.setInputCloud (filtered_cloud1);
-      norm_est.compute (*points_with_normals1);
-      pcl::copyPointCloud (*filtered_cloud1, *points_with_normals1);
-
-      // Align
-      pcl::IterativeClosestPointNonLinear<PointNormalT, PointNormalT> reg;
-      reg.setTransformationEpsilon (alignToolConfig_.Epsilon);
-      // Set the maximum distance between two correspondences (cloud0<->cloud1) to user input
-      // Note: adjust this based on the size of your datasets
-      reg.setMaxCorrespondenceDistance (alignToolConfig_.MaxCorrespondenceDistance);  
-      reg.setMaximumIterations(alignToolConfig_.MaxIterations);
-      // Set the first pointcloud as the target
-      reg.setInputTarget (points_with_normals0);
-      reg.setInputSource (points_with_normals1);
-
-      PointCloudWithNormals::Ptr reg_result = points_with_normals1;
-      
-      //Get Results
-      reg.align (*reg_result, current_guess_);
-
-      ROS_INFO_STREAM_NAMED(node_name, "ICP Nonlinear Transform converged:" << reg.hasConverged ()
-              << " score: " << reg.getFitnessScore () << " epsilon:" << reg.getTransformationEpsilon());
-      
-      if(reg.hasConverged() ) current_guess_ = reg.getFinalTransformation();
-
-    }
-    // Normal Distributions Transform
-    else if(alignToolConfig_.Method == 2)
-    {
-      // Initializing Normal Distributions Transform (NDT).
-      pcl::NormalDistributionsTransform<PointT, PointT> ndt;
-
-      ndt.setTransformationEpsilon(alignToolConfig_.Epsilon);
-      ndt.setStepSize(alignToolConfig_.StepSize);
-      ndt.setResolution(alignToolConfig_.Resolution);
-      ndt.setMaximumIterations(alignToolConfig_.MaxIterations);
-
-      // Set the first pointcloud as the target
-      ndt.setInputTarget(cloud0);
-      ndt.setInputSource(filtered_cloud1);
-
-      //Get Results
-      ndt.align(*output_cloud1, current_guess_);
-      
-      ROS_INFO_STREAM_NAMED(node_name, "Normal Distributions Transform converged:" << ndt.hasConverged ()
-                << " score: " << ndt.getFitnessScore () << " prob:" << ndt.getTransformationProbability());
-
-      if(ndt.hasConverged() ) 
-      {
-        current_guess_ = ndt.getFinalTransformation();
-      
-        Eigen::Matrix3f rotation_matrix = current_guess_.block(0,0,3,3);
-        Eigen::Vector3f translation_vector = current_guess_.block(0,3,3,1);
-        ROS_INFO_STREAM_NAMED(node_name, "This transformation can be replicated using:");
-        ROS_INFO_STREAM_NAMED(node_name, "rosrun tf static_transform_publisher " << translation_vector.transpose()
-                << " " << rotation_matrix.eulerAngles(2,1,0).transpose() << " /" << parent_frame
-                << " /" << child_frame << " 10");
-      }
-
-    }
-    // ICP with Normals
-    else if(alignToolConfig_.Method == 3)
-    {
-      #if (defined(PCL_VERSION) && PCL_VERSION_COMPARE(<, 1, 10, 1))
-        throw std::runtime_error("PCL must be at or above version 1.10.1 for this method=3");
-      #else
-
-        // Compute surface normals and curvature
-        PointCloudWithNormals::Ptr points_with_normals0 (new PointCloudWithNormals);
-        PointCloudWithNormals::Ptr points_with_normals1 (new PointCloudWithNormals);
-
-        pcl::NormalEstimation<PointT, PointNormalT> norm_est;
-        pcl::search::KdTree<pcl::PointXYZI>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZI> ());
-        norm_est.setSearchMethod (tree);
-        
-        if(alignToolConfig_.KSearch > 0) norm_est.setKSearch (alignToolConfig_.KSearch);
-        else norm_est.setRadiusSearch(alignToolConfig_.RadiusSearch);
-        
-        norm_est.setInputCloud (filtered_cloud0);
-        norm_est.compute (*points_with_normals0);
-        pcl::copyPointCloud (*filtered_cloud0, *points_with_normals0);
-
-        norm_est.setInputCloud (filtered_cloud1);
-        norm_est.compute (*points_with_normals1);
-        pcl::copyPointCloud (*filtered_cloud1, *points_with_normals1);
-
-        // Align
-        pcl::IterativeClosestPointWithNormals<PointNormalT, PointNormalT> reg;
-        reg.setTransformationEpsilon (alignToolConfig_.Epsilon);
-        // Set the maximum distance between two correspondences (cloud0<->cloud1) to user input
-        // Note: adjust this based on the size of your datasets
-        reg.setMaxCorrespondenceDistance (alignToolConfig_.MaxCorrespondenceDistance);  
-        reg.setMaximumIterations(alignToolConfig_.MaxIterations);
-        reg.setUseSymmetricObjective(true);
-        reg.setEnforceSameDirectionNormals(true);
-        // Set the first pointcloud as the target
-        reg.setInputTarget (points_with_normals0);
-        reg.setInputSource (points_with_normals1);
-
-        PointCloudWithNormals::Ptr reg_result = points_with_normals1;
-        
-        //Get Results
-        reg.align (*reg_result, current_guess_);
-
-        ROS_INFO_STREAM_NAMED(node_name, "ICP with Normals converged:" << reg.hasConverged ()
-                << " score: " << reg.getFitnessScore () << " epsilon:" << reg.getTransformationEpsilon());
-        
-        if(reg.hasConverged() ) current_guess_ = reg.getFinalTransformation();
-
-
-      #endif
-    }
+    Multi_Sensor_Alignment::PerformRegistration(filtered_cloud0, filtered_cloud1,
+         current_guess_, alignToolConfig_.Method, alignToolConfig_.MaxIterations, alignToolConfig_.Epsilon,  
+         alignToolConfig_.KSearch, alignToolConfig_.RadiusSearch, alignToolConfig_.MaxCorrespondenceDistance, 
+         alignToolConfig_.StepSize, alignToolConfig_.Resolution);
     
   //convert transformation to ros usable form
     Eigen::Matrix4f mf = (current_guess_);
@@ -653,6 +469,9 @@ namespace Multi_Sensor_Alignment
     }
 
     // Transforming filtered or unfiltered, input cloud using found transform.
+    pcl::PointCloud<PointT>::Ptr output_cloud0(new pcl::PointCloud<PointT>);
+    pcl::PointCloud<PointT>::Ptr output_cloud1(new pcl::PointCloud<PointT>);
+
     if(is_output_filtered_)
     {
       pcl::copyPointCloud (*filtered_cloud0, *output_cloud0);
@@ -912,45 +731,6 @@ namespace Multi_Sensor_Alignment
     return Cloud_Alignment::pushRollPitchCorrection();
   }
   
-
-  void Cloud_Alignment::DownsampleCloud(const pcl::PointCloud<PointT>::Ptr in_cloud,
-                                                pcl::PointCloud<PointT> &out_cloud,
-                                                double in_leaf_size)
-
-  {
-    pcl::PointCloud<PointT>::Ptr filtered_ptr(new pcl::PointCloud<PointT>);
-  
-    // build the condition
-    pcl::ConditionAnd<PointT>::Ptr range_cond (new pcl::ConditionAnd<PointT> ());
-    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("intensity", pcl::ComparisonOps::GE, alignToolConfig_.i_min)));
-    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("intensity", pcl::ComparisonOps::LE, alignToolConfig_.i_max)));
-    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("x",         pcl::ComparisonOps::GE, alignToolConfig_.x_min)));
-    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("x",         pcl::ComparisonOps::LE, alignToolConfig_.x_max)));
-    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("y",         pcl::ComparisonOps::GE, alignToolConfig_.y_min)));
-    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("y",         pcl::ComparisonOps::LE, alignToolConfig_.y_max)));
-    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("z",         pcl::ComparisonOps::GE, alignToolConfig_.z_min)));
-    range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new pcl::FieldComparison<PointT> ("z",         pcl::ComparisonOps::LE, alignToolConfig_.z_max)));
-    // build the filter
-    pcl::ConditionalRemoval<PointT> condrem;
-    condrem.setCondition (range_cond);
-    condrem.setInputCloud (in_cloud);
-    condrem.setKeepOrganized(false);
-    // apply filter
-    condrem.filter (*filtered_ptr);
-
-    if(in_leaf_size > 0.001)
-    {
-      pcl::VoxelGrid<PointT> voxelized;
-      voxelized.setInputCloud(filtered_ptr);
-      voxelized.setLeafSize((float)in_leaf_size, (float)in_leaf_size, (float)in_leaf_size);
-      voxelized.filter(out_cloud);
-    }
-    else
-    {
-      pcl::copyPointCloud(*filtered_ptr, out_cloud);
-    }
-  }
-
   geometry_msgs::Quaternion Cloud_Alignment::AverageQuaternion(const geometry_msgs::Quaternion& newRotation)
   {
     //ROS_INFO_STREAM_NAMED(node_name, current_qx_ << " " << current_qy_ << " " << current_qz_ << " " << current_qw_);

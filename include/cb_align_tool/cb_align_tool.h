@@ -28,25 +28,7 @@ Copyright (c) 2017
 #include <multi_sensor_alignment/alignment_publisherConfig.h>
 #include <visualization_msgs/Marker.h>
 
-#include <pcl/common/common.h>
-#include <pcl/common/eigen.h>
-#include <pcl/common/transforms.h>
-#include <pcl/common/intersections.h>
-#include <pcl/filters/filter.h>
-#include <pcl/filters/crop_box.h>
-#include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/extract_indices.h>
-#include <pcl/filters/impl/extract_indices.hpp>
-#include <pcl/filters/project_inliers.h>
-#include <pcl/filters/impl/project_inliers.hpp> 
-#include <pcl/features/normal_3d.h>
-#include <pcl/sample_consensus/method_types.h>
-#include <pcl/sample_consensus/model_types.h>
-#include <pcl/segmentation/sac_segmentation.h>
-#include <pcl/segmentation/impl/sac_segmentation.hpp>
-#include <pcl/surface/convex_hull.h>
-#include <pcl/surface/concave_hull.h>
-
+#include "icp_common_tools.h"
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/calib3d.hpp>
@@ -57,11 +39,6 @@ Copyright (c) 2017
 #include <boost/accumulators/statistics/rolling_mean.hpp>
 
 using namespace boost::accumulators;
-
-//convenient typedefs
-typedef pcl::PointXYZI PointT;
-typedef pcl::PointCloud<PointT> PointCloud;
-
 /**
  * \brief Cross-registers camera and pointcloud2 topics for use in alignment
  */
@@ -102,7 +79,6 @@ namespace Multi_Sensor_Alignment
     //Methods
     bool reset();
     bool pushTransform();
-    void DownsampleCloud(const pcl::PointCloud<PointT> &in_cloud, pcl::PointCloud<PointT> &out_cloud, double in_leaf_size);
     void ImageProcessing(cv::Mat &grey, std::vector<cv::Point2f> &chessCorners, pcl::PointCloud<PointT>::Ptr &cloud);
     void CloudProcessing(pcl::PointCloud<PointT>::Ptr &in_cloud);
     double * convert_to_imgpts(double x, double y, double z);

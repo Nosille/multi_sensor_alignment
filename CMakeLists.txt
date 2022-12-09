@@ -195,12 +195,14 @@ set_target_properties(${PROJECT_NAME}_alignment_publisher_node PROPERTIES OUTPUT
 add_library(${PROJECT_NAME}_icp_align_tool_lib SHARED
   src/icp_align_tool_class.cpp
   include/icp_align_tool/icp_align_tool.h
+  include/icp_common_tools.h
 )
 
 add_library(${PROJECT_NAME}_cb_align_tool_lib SHARED
   src/cb_align_tool_class.cpp
   include/cb_align_tool/cb_align_tool.h
   include/sensor_alignment.h
+  include/icp_common_tools.h
 )
 
 ## Specify libraries to link a library or executable target against

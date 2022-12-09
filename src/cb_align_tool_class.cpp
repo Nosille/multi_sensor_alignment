@@ -536,7 +536,11 @@ namespace Multi_Sensor_Alignment
     ROS_INFO_STREAM("Filter Cloud");
   //Filter the cloud using user defined filtering parameters
     pcl::PointCloud<PointT>::Ptr cloud_filtered(new pcl::PointCloud<PointT>);
-    DownsampleCloud(*cloud, *cloud_filtered, 0.0);
+    Multi_Sensor_Alignment::DownsampleCloud(cloud, cloud_filtered, 0.0,
+      alignToolConfig_.i_min, alignToolConfig_.i_max, 
+      alignToolConfig_.x_min, alignToolConfig_.x_max,
+      alignToolConfig_.y_min, alignToolConfig_.y_max,
+      alignToolConfig_.z_min, alignToolConfig_.z_max);
 
   //Further filter the cloud by drawing a cube around the center point found in the image transform
       pcl::PointCloud<PointT>::Ptr cloud_filtered2(new pcl::PointCloud<PointT>);
@@ -1176,36 +1180,6 @@ namespace Multi_Sensor_Alignment
             std_srvs::Empty::Response &resp)
   {
     return Chessboard_Alignment::pushTransform();
-  }
-
-
-  void Chessboard_Alignment::DownsampleCloud(const pcl::PointCloud<PointT> &in_cloud,
-                                                pcl::PointCloud<PointT> &out_cloud,
-                                                double in_leaf_size)
-  {
-    pcl::PointCloud<PointT>::Ptr filtered_ptr(new pcl::PointCloud<PointT>);
-    filtered_ptr->clear();
-    filtered_ptr->header = in_cloud.header;
-    for (int i = 0; i < in_cloud.points.size(); ++i)
-    {
-      if(in_cloud.points[i].intensity >= alignToolConfig_.i_min && in_cloud.points[i].intensity <= alignToolConfig_.i_max)
-      if(in_cloud.points[i].x         >= alignToolConfig_.x_min && in_cloud.points[i].x <= alignToolConfig_.x_max)
-      if(in_cloud.points[i].y         >= alignToolConfig_.y_min && in_cloud.points[i].y <= alignToolConfig_.y_max)
-      if(in_cloud.points[i].z         >= alignToolConfig_.z_min && in_cloud.points[i].z <= alignToolConfig_.z_max)
-        filtered_ptr->push_back(in_cloud.points[i]);
-    }
-
-    if(in_leaf_size > 0.001)
-    {
-      pcl::VoxelGrid<PointT> voxelized;
-      voxelized.setInputCloud(filtered_ptr);
-      voxelized.setLeafSize((float)in_leaf_size, (float)in_leaf_size, (float)in_leaf_size);
-      voxelized.filter(out_cloud);
-    }
-    else
-    {
-      pcl::copyPointCloud(*filtered_ptr, out_cloud);
-    }
   }
 
   // Convert 3D points w.r.t camera frame to 2D pixel points in image frame
