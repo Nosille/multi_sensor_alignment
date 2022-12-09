@@ -39,13 +39,7 @@ Copyright (c) 2017
 #include <message_filters/synchronizer.h>
 #include <message_filters/sync_policies/approximate_time.h>
 
-#include <boost/accumulators/accumulators.hpp>
-#include <boost/accumulators/statistics/stats.hpp>
-#include <boost/accumulators/statistics/rolling_mean.hpp>
-
 #include "std_msgs/String.h"
-
-using namespace boost::accumulators;
 
 /**
  * \brief Cross-registers pointcloud2 topics for use in alignment
@@ -55,8 +49,7 @@ namespace Multi_Sensor_Alignment
 {
   class Cloud_Alignment
   {
-  typedef accumulator_set<double, stats<tag::rolling_mean > > window_acc;
-  
+    
   public:
     Cloud_Alignment(const ros::NodeHandle &node_handle, const ros::NodeHandle &private_node_handle, int buffer_size);
 
@@ -96,9 +89,6 @@ namespace Multi_Sensor_Alignment
     bool pushYaw();
     bool calculateRollPitchCorrection();
     bool pushRollPitchCorrection();
-
-    static bool AreQuaternionsClose(tf2::Quaternion q1, tf2::Quaternion q2);
-    geometry_msgs::Quaternion AverageQuaternion(const geometry_msgs::Quaternion& newRotation);
 
     //service callbacks
     bool freeze0_callback(std_srvs::Empty::Request &req,
@@ -181,7 +171,7 @@ namespace Multi_Sensor_Alignment
 //     double filter_z_max_;
 
     Eigen::Matrix4f current_guess_;
-    geometry_msgs::TransformStamped::Ptr output_;
+    geometry_msgs::TransformStamped::Ptr output_transform_;
     geometry_msgs::Transform last_transform_;
     window_acc x_array_;
     window_acc y_array_;

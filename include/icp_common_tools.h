@@ -54,6 +54,10 @@ Copyright (c) 2017
 #include <pcl/registration/icp_nl.h>
 #include <pcl/registration/ndt.h>
 
+#include <boost/accumulators/accumulators.hpp>
+#include <boost/accumulators/statistics/stats.hpp>
+#include <boost/accumulators/statistics/rolling_mean.hpp>
+
 #include "std_msgs/String.h"
 
 //convenient typedefs
@@ -62,12 +66,94 @@ typedef pcl::PointCloud<PointT> PointCloud;
 typedef pcl::PointNormal PointNormalT;
 typedef pcl::PointCloud<PointNormalT> PointCloudWithNormals;
 
+using namespace boost::accumulators;
+typedef accumulator_set<double, stats<tag::rolling_mean > > window_acc;
+
 /**
  * \brief Cross-registers pointcloud2 topics for use in alignment
  */
 
 namespace Multi_Sensor_Alignment
 {
+    
+    //Returns true if the two input quaternions are close to each other. This can
+    //be used to check whether or not one of two quaternions which are supposed to
+    //be very similar but has its component signs reversed (q has the same rotation as
+    //-q)
+    static bool AreQuaternionsClose(tf2::Quaternion q1, tf2::Quaternion q2)
+    {
+
+        float dot = q1.dot(q2);
+        
+        if(dot < 0.0f)
+        {
+
+            return false;                   
+        }
+
+        else
+        {
+
+            return true;
+        }
+    }
+    
+    geometry_msgs::Quaternion AverageQuaternion(const geometry_msgs::Quaternion& _newRotation, 
+    window_acc &_qx_array, window_acc &_qy_array, window_acc &_qz_array, window_acc &_qw_array, 
+    double &_current_qx, double &_current_qy, double &_current_qz, double &_current_qw)
+    {
+        //ROS_INFO_STREAM_NAMED(node_name, current_qx_ << " " << current_qy_ << " " << current_qz_ << " " << current_qw_);
+        tf2::Quaternion lastRotation(_current_qx, _current_qy, _current_qz, _current_qw);
+        tf2::Quaternion currRotation; 
+        tf2::convert(_newRotation, currRotation);
+        //On first pass lastRotation will be zero length
+        if(abs(lastRotation.length()) < 0.1)
+        {
+        ROS_INFO_STREAM("AverageQuaternion initialized");
+
+        //Add new values to accumulators
+        _qx_array(currRotation.x()); _current_qx = currRotation.x();
+        _qy_array(currRotation.y()); _current_qy = currRotation.y();
+        _qz_array(currRotation.z()); _current_qz = currRotation.z();
+        _qw_array(currRotation.w()); _current_qw = currRotation.w();
+
+        return _newRotation;
+        }
+
+        //Before we add the new rotation to the average (mean), we have to check whether the quaternion has to be inverted. Because
+        //q and -q are the same rotation, but cannot be averaged, we have to make sure they are all the same.
+        // if(AreQuaternionsClose(currRotation, lastRotation))
+        // {
+        //     ROS_INFO_STREAM_NAMED(node_name, "flip quaternion");
+        //     ROS_INFO_STREAM_NAMED(node_name, currRotation.x() << " " << currRotation.y() << " " << currRotation.z() << " " << currRotation.w());
+        //     ROS_INFO_STREAM_NAMED(node_name, lastRotation.x() << " " << lastRotation.y() << " " << lastRotation.z() << " " << lastRotation.w());
+        //     currRotation = tf2::Quaternion(-currRotation.x(), -currRotation.y(), -currRotation.z(), -currRotation.w());
+        // }
+        _current_qx = currRotation.x();
+        _current_qy = currRotation.y();
+        _current_qz = currRotation.z();
+        _current_qw = currRotation.w();
+        
+        //Add new values to accumulators
+        _qx_array(currRotation.x());
+        _qy_array(currRotation.y());
+        _qz_array(currRotation.z());
+        _qw_array(currRotation.w());
+        float w = rolling_mean(_qw_array);
+        float x = rolling_mean(_qx_array);
+        float y = rolling_mean(_qy_array);
+        float z = rolling_mean(_qz_array);
+
+        //Convert back to quaternion
+        tf2::Quaternion mean(x, y, z, w);
+
+        geometry_msgs::Quaternion result;
+        tf2::convert(mean.normalize(), result);
+
+        //note: if speed is an issue, you can skip the normalization step
+        return result;
+    }
+
     void DownsampleCloud(const pcl::PointCloud<PointT>::Ptr in_cloud, pcl::PointCloud<PointT>::Ptr out_cloud, double in_leaf_size,
         double i_min, double i_max, 
         double x_min, double x_max, 

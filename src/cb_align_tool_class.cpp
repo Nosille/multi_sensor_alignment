@@ -96,32 +96,17 @@ namespace Multi_Sensor_Alignment
     pnh_.param("width_offset_mm", width_offset_, 0.0);
       ROS_INFO_STREAM_NAMED(node_name, "width_offset set to " << width_offset_);      
 
-    if(received_alignPubConfig_)
+    if(!received_alignPubConfig_)
     {
-      pnh_.param("x", x_, alignPubConfig_.x);
-      pnh_.param("y", y_, alignPubConfig_.y);
-      pnh_.param("z", z_, alignPubConfig_.z);
-      pnh_.param("roll", roll_, alignPubConfig_.roll);
-      pnh_.param("pitch", pitch_, alignPubConfig_.pitch);
-      pnh_.param("yaw", yaw_, alignPubConfig_.yaw);
-    }
-    else
-    {
-      ROS_INFO_STREAM_NAMED(node_name, "Proceeding without alignment publisher using identify transform for initial guess.");
-      pnh_.param("x", x_, 0.0);
-      pnh_.param("y", y_, 0.0);
-      pnh_.param("z", z_, 0.0);
-      pnh_.param("roll", roll_, 0.0);
-      pnh_.param("pitch", pitch_, 0.0);
-      pnh_.param("yaw", yaw_, 0.0);
+      ROS_INFO_STREAM_NAMED(node_name, "Proceeding without alignment publisher.");
     }
 
-      ROS_INFO_STREAM_NAMED(node_name, "x set to " << alignPubConfig_.x);
-      ROS_INFO_STREAM_NAMED(node_name, "y set to " << alignPubConfig_.y);
-      ROS_INFO_STREAM_NAMED(node_name, "z set to " << alignPubConfig_.z);
-      ROS_INFO_STREAM_NAMED(node_name, "roll set to " << alignPubConfig_.roll);
-      ROS_INFO_STREAM_NAMED(node_name, "pitch set to " << alignPubConfig_.pitch);
-      ROS_INFO_STREAM_NAMED(node_name, "yaw set to " << alignPubConfig_.yaw);
+    ROS_INFO_STREAM_NAMED(node_name, "x set to " << alignPubConfig_.x);
+    ROS_INFO_STREAM_NAMED(node_name, "y set to " << alignPubConfig_.y);
+    ROS_INFO_STREAM_NAMED(node_name, "z set to " << alignPubConfig_.z);
+    ROS_INFO_STREAM_NAMED(node_name, "roll set to " << alignPubConfig_.roll);
+    ROS_INFO_STREAM_NAMED(node_name, "pitch set to " << alignPubConfig_.pitch);
+    ROS_INFO_STREAM_NAMED(node_name, "yaw set to " << alignPubConfig_.yaw);
 
     pnh_.param<std::string>("input_cloud_topic", input_cloud_topic_, "input_cloud");
       ROS_INFO_STREAM_NAMED(node_name, "input_cloud_topic set to " << input_cloud_topic_);
@@ -129,12 +114,14 @@ namespace Multi_Sensor_Alignment
       ROS_INFO_STREAM_NAMED(node_name, "input_image_topic set to " << input_image_topic_);
     pnh_.param<std::string>("input_info_topic", input_info_topic_, "input_info");
       ROS_INFO_STREAM_NAMED(node_name, "input_info_topic set to " << input_info_topic_);
-    pnh_.param<std::string>("image_cloud_topic", image_cloud_topic_, "image_cloud");
-      ROS_INFO_STREAM_NAMED(node_name, "image_cloud_topic set to " << image_cloud_topic_);
-    pnh_.param<std::string>("filter_cloud_topic", filter_cloud_topic_, "filter_cloud");
-      ROS_INFO_STREAM_NAMED(node_name, "filter_cloud_topic set to " << filter_cloud_topic_);
-    pnh_.param<std::string>("output_cloud_topic", output_cloud_topic_, "output_cloud");
-      ROS_INFO_STREAM_NAMED(node_name, "output_cloud_topic set to " << output_cloud_topic_);
+    // pnh_.param<std::string>("image_cloud_topic", image_cloud_topic_, "image_cloud");
+    //   ROS_INFO_STREAM_NAMED(node_name, "image_cloud_topic set to " << image_cloud_topic_);
+    // pnh_.param<std::string>("filter_cloud_topic", filter_cloud_topic_, "filter_cloud");
+    //   ROS_INFO_STREAM_NAMED(node_name, "filter_cloud_topic set to " << filter_cloud_topic_);
+    pnh_.param<std::string>("output_cloud0_topic", output_cloud0_topic_, "output_cloud0");
+      ROS_INFO_STREAM_NAMED(node_name, "output_cloud0_topic set to " << output_cloud0_topic_);
+    pnh_.param<std::string>("output_cloud1_topic", output_cloud1_topic_, "output_cloud1");
+      ROS_INFO_STREAM_NAMED(node_name, "output_cloud1_topic set to " << output_cloud1_topic_);
     pnh_.param<std::string>("output_camera_topic", output_camera_topic_, "output_camera");
       ROS_INFO_STREAM_NAMED(node_name, "output_camera_topic set to " << output_camera_topic_);
     pnh_.param<std::string>("output_marker_topic", output_marker_topic_, "output_marker");
@@ -179,20 +166,28 @@ namespace Multi_Sensor_Alignment
 
   // ROS publishers
     output_trans_pub_  = nh_.advertise<geometry_msgs::TransformStamped>(output_trans_topic_,100);
-    image_cloud_pub_   = nh_.advertise<sensor_msgs::PointCloud2>(image_cloud_topic_,10);
-    filter_cloud_pub_  = nh_.advertise<sensor_msgs::PointCloud2>(filter_cloud_topic_,10);
-    output_cloud_pub_  = nh_.advertise<sensor_msgs::PointCloud2>(output_cloud_topic_,10);
+    // image_cloud_pub_   = nh_.advertise<sensor_msgs::PointCloud2>(image_cloud_topic_,10);
+    // filter_cloud_pub_  = nh_.advertise<sensor_msgs::PointCloud2>(filter_cloud_topic_,10);
+    output_cloud0_pub_  = nh_.advertise<sensor_msgs::PointCloud2>(output_cloud0_topic_,10);
+    output_cloud1_pub_  = nh_.advertise<sensor_msgs::PointCloud2>(output_cloud1_topic_,10);
     output_camera_pub_ = nh_.advertise<sensor_msgs::Image>(output_camera_topic_,10);
-    output_marker_pub_ = nh_.advertise<visualization_msgs::Marker>(output_marker_topic_, 10);
+    // output_marker_pub_ = nh_.advertise<visualization_msgs::Marker>(output_marker_topic_, 10);
     pub_timer_ = nh_.createTimer(ros::Duration(1.0/output_frequency_), boost::bind(& Chessboard_Alignment::publish_callback, this, _1));
 
   // ROS subscribers
-    sourceCloud_->cloud_sub = nh_.subscribe<sensor_msgs::PointCloud2>(sourceCloud_->cloud_in_topic, 10, boost::bind(&Chessboard_Alignment::input_cloud_callback, this, _1));
+    sourceCloud_->cloud_sub = nh_.subscribe<sensor_msgs::PointCloud2>(sourceCloud_->cloud_in_topic, 1, boost::bind(&Chessboard_Alignment::input_cloud_callback, this, _1));
     sourceImage_->cameraSync->registerCallback(boost::bind(&Chessboard_Alignment::input_camera_callback, this, _1, _2));
 
   // ROS Services
-    service0_ = pnh_.advertiseService("reset", &Chessboard_Alignment::reset_callback, this);
-    service1_ = pnh_.advertiseService("push_transform", &Chessboard_Alignment::pushtransform_callback, this);
+    if(received_alignPubConfig_)
+    {
+      service0_ = pnh_.advertiseService("reset", &Chessboard_Alignment::reset_callback, this);
+      service1_ = pnh_.advertiseService("push_transform", &Chessboard_Alignment::pushtransform_callback, this);
+    } 
+    else 
+    {
+      ROS_WARN_STREAM_NAMED(node_name, "CB_ALIGN_TOOL did not find the alignment publisher.");
+    }
 
   // Reset the guess transform for good measure
     Chessboard_Alignment::reset();
@@ -222,12 +217,8 @@ namespace Multi_Sensor_Alignment
     ROS_INFO("%f %f %f %f %f %f", 
             config.x, config.y, config.z, config.roll, config.pitch, config.yaw);
 
-    x_     = config.x;
-    y_     = config.y;
-    z_     = config.z;
-    roll_  = config.roll;
-    pitch_ = config.pitch;
-    yaw_   = config.yaw;
+    if (!received_alignPubConfig_) 
+      initialAlignPubConfig_ = config;
 
     alignPubConfig_ = config;
     received_alignPubConfig_ = true;
@@ -277,6 +268,7 @@ namespace Multi_Sensor_Alignment
 
     // Pointcloud
     const std::lock_guard<std::mutex> lock_cloud(cloud_mutex_);
+    pcl::PointCloud<PointT>::Ptr input_cloud(new pcl::PointCloud<PointT>);
     pcl::PointCloud<PointT>::Ptr lidar_cloud(new pcl::PointCloud<PointT>);
     pcl::PointCloud<PointT>::Ptr image_cloud(new pcl::PointCloud<PointT>);
     if(sourceCloud_->cloud_buffer.back().width < 1 || sourceCloud_->cloud_buffer.back().height < 1)
@@ -284,7 +276,7 @@ namespace Multi_Sensor_Alignment
        ROS_WARN_STREAM("No cloud found");
        return;
     }
-    pcl::fromPCLPointCloud2(sourceCloud_->cloud_buffer.back(), *lidar_cloud);
+    pcl::fromPCLPointCloud2(sourceCloud_->cloud_buffer.back(), *input_cloud);
     
   //Check image for Chessboard Pattern
     cv::Size2i patternNum(grid_rows_,grid_cols_);
@@ -297,52 +289,111 @@ namespace Multi_Sensor_Alignment
     {
        ROS_INFO_STREAM("Chessboard Found");
        
-    // Find location of chessboard (image_transform) and create pointcloud (image_cloud) 
+    // Find location of chessboard in image (image_transform) and create pointcloud (image_cloud) representing board
        ImageProcessing(gray, chessCorners, image_cloud); 
 
     //Filter lidar_cloud to area in vicinity of chessboard in the image   
-       CloudProcessing(lidar_cloud);
+       CloudProcessing(input_cloud, lidar_cloud);
 
+    //Perform Registration
+      Multi_Sensor_Alignment::PerformRegistration(lidar_cloud, image_cloud,
+         current_guess_, alignToolConfig_.Method, alignToolConfig_.MaxIterations, alignToolConfig_.Epsilon,  
+         alignToolConfig_.KSearch, alignToolConfig_.RadiusSearch, alignToolConfig_.MaxCorrespondenceDistance, 
+         alignToolConfig_.StepSize, alignToolConfig_.Resolution);
+    
+    //convert transformation to ros usable form
+      Eigen::Matrix4f mf = (current_guess_);
+      Eigen::Matrix4d md(mf.cast<double>());
+      Eigen::Affine3d affine(md);
+      geometry_msgs::TransformStamped transformStamped = tf2::eigenToTransform(affine);
+      output_transform_->transform = transformStamped.transform;
+      output_transform_->header = pcl_conversions::fromPCL(image_cloud->header);
+      output_transform_->header.frame_id = parent_frame_id_;
+      output_transform_->child_frame_id = child_frame_id_;
+    
+    //Add new transform to accumulator and compute average
+      if(buffer_size_ > 1)
+      {
+        x_array_(output_transform_->transform.translation.x); double x_mean = rolling_mean(x_array_);
+        y_array_(output_transform_->transform.translation.y); double y_mean = rolling_mean(y_array_);
+        z_array_(output_transform_->transform.translation.z); double z_mean = rolling_mean(z_array_);
+        geometry_msgs::Quaternion q_mean = Multi_Sensor_Alignment::AverageQuaternion(output_transform_->transform.rotation, 
+            qx_array_, qy_array_, qz_array_, qw_array_, current_qx_, current_qy_, current_qz_, current_qw_);
 
-    // Extract output transform as difference between these transforms
-       tf2::Transform transform1, transform2;
-       
-       //image transform
-       tf2::convert(image_transform_->transform, transform1);
-       tf2::Vector3 vector1(transform1.getOrigin());
-       tf2::Matrix3x3 matrix1(transform1.getRotation());
-       double x, y, z, roll, pitch, yaw;
-       x = vector1.getX();
-       y = vector1.getY();
-       z = vector1.getZ();
-       matrix1.getRPY(roll, pitch, yaw);
-         //ROS_INFO_STREAM("image transform");    
-         ROS_INFO_STREAM("image_transform->translation\n" << x << "\n" << y << "\n" << z);
-         ROS_INFO_STREAM("image_transform->rotation\n"    << roll << "\n" << pitch << "\n" << yaw);
-       
-       //pointcloud transform
-       tf2::convert(cloud_transform_->transform, transform2);
-       tf2::Vector3 vector2(transform2.getOrigin());
-       tf2::Matrix3x3 matrix2(transform2.getRotation());
-       x = vector2.getX();
-       y = vector2.getY();
-       z = vector2.getZ();
-       matrix2.getRPY(roll, pitch, yaw);
-         //ROS_INFO_STREAM("cloud transform");
-         ROS_INFO_STREAM("cloud_transform->translation\n" << x << "\n" << y << "\n" << z);
-         ROS_INFO_STREAM("cloud_transform->rotation\n"    << roll << "\n" << pitch << "\n" << yaw);
+        //Update transformations with average
+        output_transform_->transform.translation.x = x_mean;
+        output_transform_->transform.translation.y = y_mean;
+        output_transform_->transform.translation.z = z_mean;
+        output_transform_->transform.rotation = q_mean;
 
-       tf2::Transform transform3 = transform1.inverseTimes(transform2);
-       tf2::Vector3 vector3(transform3.getOrigin());
-       tf2::Matrix3x3 matrix3(transform3.getRotation());
-       x = vector3.getX();
-       y = vector3.getY();
-       z = vector3.getZ();
-       matrix3.getRPY(roll, pitch, yaw);
-       tf2::convert(transform3, output_transform_->transform); 
-         //ROS_INFO_STREAM("alignment transform");
-         ROS_INFO_STREAM("align_transform->translation\n" << x << "\n" << y << "\n" << z);
-         ROS_INFO_STREAM("align_transform->rotation\n"    << roll << "\n" << pitch << "\n" << yaw);
+        Eigen::Affine3d eigenTransform = tf2::transformToEigen(output_transform_->transform);
+        current_guess_ = eigenTransform.matrix().cast<float>();
+      }
+
+    // Calculate diff from last_transform
+      tf2::Transform old_trans, new_trans;
+      tf2::convert(last_transform_, old_trans);
+      tf2::convert(output_transform_->transform, new_trans);
+      tf2::Transform diff = old_trans.inverseTimes(new_trans);
+      
+      geometry_msgs::TransformStamped gm_diff;
+      tf2::convert(diff, gm_diff.transform);
+      gm_diff.header = pcl_conversions::fromPCL(image_cloud->header);
+      gm_diff.header.frame_id = child_frame_id_;
+      gm_diff.child_frame_id = child_frame_id_;
+
+      tf2::Vector3 diff_vector(diff.getOrigin());
+      tf2::Matrix3x3 diff_matrix(diff.getRotation());
+      double diff_x, diff_y, diff_z, diff_roll, diff_pitch, diff_yaw;
+      diff_x = diff_vector.getX();
+      diff_y = diff_vector.getY();
+      diff_z = diff_vector.getZ();
+      diff_matrix.getRPY(diff_roll, diff_pitch, diff_yaw);
+
+      double roll,pitch,yaw;
+      tf2::Quaternion q(
+            output_transform_->transform.rotation.x,
+            output_transform_->transform.rotation.y,
+            output_transform_->transform.rotation.z,
+            output_transform_->transform.rotation.w);
+      tf2::Matrix3x3 m(q);
+      m.getRPY(roll,pitch,yaw);
+
+      ROS_INFO_STREAM_NAMED(node_name, "ICP Translation X: " << output_transform_->transform.translation.x << " m" << ", diff: " << diff_x << " m");
+      ROS_INFO_STREAM_NAMED(node_name, "ICP Translation Y: " << output_transform_->transform.translation.y << " m" << ", diff: " << diff_y << " m");
+      ROS_INFO_STREAM_NAMED(node_name, "ICP Translation Z: " << output_transform_->transform.translation.z << " m" << ", diff: " << diff_z << " m");
+
+      ROS_INFO_STREAM_NAMED(node_name, "Roll:  " << roll <<  " rad, " << (roll/PI*180)  << " deg" << ", diff: " << diff_roll << " rad");
+      ROS_INFO_STREAM_NAMED(node_name, "pitch: " << pitch << " rad, " << (pitch/PI*180) << " deg" << ", diff: " << diff_pitch << " rad");
+      ROS_INFO_STREAM_NAMED(node_name, "Yaw:   " << yaw <<   " rad, " << (yaw/PI*180)   << " deg" << ", diff: " << diff_yaw << " rad");
+
+      
+    // Create output msgs
+      pcl::PointCloud<PointT>::Ptr output_cloud0(new pcl::PointCloud<PointT>);
+      pcl::PointCloud<PointT>::Ptr output_cloud1(new pcl::PointCloud<PointT>);
+
+      pcl::copyPointCloud (*lidar_cloud, *output_cloud0);
+      pcl::copyPointCloud (*image_cloud, *output_cloud1);
+
+      geometry_msgs::TransformStamped::Ptr output(output_transform_);
+      sensor_msgs::PointCloud2::Ptr output_msg0(new sensor_msgs::PointCloud2);
+      sensor_msgs::PointCloud2::Ptr output_msg1(new sensor_msgs::PointCloud2);
+      sensor_msgs::PointCloud2 p_msg1;
+      pcl::toROSMsg(*output_cloud0, *output_msg0);
+      pcl::toROSMsg(*output_cloud1, *output_msg1);
+
+      //first convert output_msg1 to parent_frame then apply output transform
+      // geometry_msgs::TransformStamped pTransform = tfBuffer_.lookupTransform(parent_frame, output_msg1->header.frame_id, output_msg1->header.stamp);
+      // tf2::doTransform(*output_msg1, *output_msg1, pTransform);
+      // tf2::doTransform(*output_msg1, *output_msg1, *output_transform_);
+
+      // correct error in cloud1's output msg 
+      tf2::doTransform(*output_msg1, *output_msg1, gm_diff);
+
+      output_trans_pub_.publish(output);
+      output_cloud0_pub_.publish(output_msg0);
+      output_cloud1_pub_.publish(output_msg1);
+
     }
     else
     {
@@ -525,25 +576,24 @@ namespace Multi_Sensor_Alignment
     sensor_msgs::PointCloud2 cloud_pc2; pcl::toROSMsg(*cloud, cloud_pc2);
     tf2::doTransform(cloud_pc2, cloud_pc2, *image_transform_);
 
-    // Publish the cloud
-    image_cloud_pub_.publish(cloud_pc2);
+    // // Publish the cloud
+    // image_cloud_pub_.publish(cloud_pc2);
 
 
   }
 
-  void Chessboard_Alignment::CloudProcessing(pcl::PointCloud<PointT>::Ptr &cloud)
+  void Chessboard_Alignment::CloudProcessing(const pcl::PointCloud<PointT>::Ptr &in_cloud, pcl::PointCloud<PointT>::Ptr &out_cloud)
   {
     ROS_INFO_STREAM("Filter Cloud");
   //Filter the cloud using user defined filtering parameters
     pcl::PointCloud<PointT>::Ptr cloud_filtered(new pcl::PointCloud<PointT>);
-    Multi_Sensor_Alignment::DownsampleCloud(cloud, cloud_filtered, 0.0,
+    Multi_Sensor_Alignment::DownsampleCloud(in_cloud, cloud_filtered, 0.0,
       alignToolConfig_.i_min, alignToolConfig_.i_max, 
       alignToolConfig_.x_min, alignToolConfig_.x_max,
       alignToolConfig_.y_min, alignToolConfig_.y_max,
       alignToolConfig_.z_min, alignToolConfig_.z_max);
 
   //Further filter the cloud by drawing a cube around the center point found in the image transform
-      pcl::PointCloud<PointT>::Ptr cloud_filtered2(new pcl::PointCloud<PointT>);
     pcl::CropBox<PointT> boxFilter;
     float maxDim = std::max(board_width_, board_height_)/1000;
     float minX = image_transform_->transform.translation.x - 0.55*maxDim;
@@ -557,12 +607,7 @@ namespace Multi_Sensor_Alignment
     boxFilter.setMin(Eigen::Vector4f(minX, minY, minZ, 1.0));
     boxFilter.setMax(Eigen::Vector4f(maxX, maxY, maxZ, 1.0));
     boxFilter.setInputCloud(cloud_filtered);
-    boxFilter.filter(*cloud_filtered2);
-
-    // // Publish the cloud
-    sensor_msgs::PointCloud2 cloud_filter;
-    pcl::toROSMsg(*cloud_filtered2, cloud_filter);
-    filter_cloud_pub_.publish(cloud_filter);
+    boxFilter.filter(*out_cloud);
 
   // //Find Plane of Board
   //   int count = 0;
@@ -1140,19 +1185,10 @@ namespace Multi_Sensor_Alignment
 
   bool Chessboard_Alignment::reset()
   {
-    //Reset Guess
-    geometry_msgs::Vector3 v;
-    v.x = x_; v.y = y_; v.z = z_;
-
-    tf2::Quaternion tf_q; geometry_msgs::Quaternion q;
-    tf_q.setRPY(roll_, pitch_, yaw_);
-    tf2::convert(tf_q, q);
-
-    geometry_msgs::Transform last_transform;
-    last_transform.translation = v;
-    last_transform.rotation = q;
-    
-    Eigen::Affine3d eigenTransform = tf2::transformToEigen(last_transform);
+    //revert Guess
+    last_transform_ = tfBuffer_.lookupTransform(parent_frame_id_, child_frame_id_, ros::Time::now()).transform;
+     
+    Eigen::Affine3d eigenTransform = tf2::transformToEigen(last_transform_);
     //current_guess_ = eigenTransform.matrix().cast<float>();
     
     //Reset rolling window accumulators

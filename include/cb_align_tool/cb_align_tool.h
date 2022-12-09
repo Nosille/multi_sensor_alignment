@@ -34,11 +34,6 @@ Copyright (c) 2017
 #include <opencv2/calib3d.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
-#include <boost/accumulators/accumulators.hpp>
-#include <boost/accumulators/statistics/stats.hpp>
-#include <boost/accumulators/statistics/rolling_mean.hpp>
-
-using namespace boost::accumulators;
 /**
  * \brief Cross-registers camera and pointcloud2 topics for use in alignment
  */
@@ -47,7 +42,6 @@ namespace Multi_Sensor_Alignment
 {
   class Chessboard_Alignment
   {
-  typedef accumulator_set<double, stats<tag::rolling_mean > > window_acc;
   
   public:
     Chessboard_Alignment(const ros::NodeHandle &node_handle, const ros::NodeHandle &private_node_handle, int buffer_size);
@@ -80,7 +74,7 @@ namespace Multi_Sensor_Alignment
     bool reset();
     bool pushTransform();
     void ImageProcessing(cv::Mat &grey, std::vector<cv::Point2f> &chessCorners, pcl::PointCloud<PointT>::Ptr &cloud);
-    void CloudProcessing(pcl::PointCloud<PointT>::Ptr &in_cloud);
+    void CloudProcessing(const pcl::PointCloud<PointT>::Ptr &in_cloud, pcl::PointCloud<PointT>::Ptr &out_cloud);
     double * convert_to_imgpts(double x, double y, double z);
     // static bool compareLineCoeff(const pcl::ModelCoefficients::Ptr &c1, const pcl::ModelCoefficients::Ptr &c2);
     // static bool comparePoints(const pcl::PointXYZ &p1, const pcl::PointXYZ &p2);
@@ -95,11 +89,12 @@ namespace Multi_Sensor_Alignment
 
     std::string parent_frame_id_, child_frame_id_;
     std::string output_trans_topic_;
-    std::string output_cloud_topic_, output_camera_topic_, output_marker_topic_;
+    std::string output_cloud0_topic_, output_cloud1_topic_, output_camera_topic_, output_marker_topic_;
     std::string image_cloud_topic_;
     std::string filter_cloud_topic_;
     std::string align_server_name_;
-    ros::Publisher output_trans_pub_, output_cloud_pub_, output_camera_pub_, output_marker_pub_;
+    ros::Publisher output_trans_pub_, output_cloud0_pub_, output_cloud1_pub_, output_camera_pub_;
+    // ros::Publisher output_marker_pub_;
     ros::Publisher image_cloud_pub_, filter_cloud_pub_;
 
     tf2_ros::TransformListener tfListener_;
@@ -110,6 +105,7 @@ namespace Multi_Sensor_Alignment
     boost::shared_ptr<dynamic_reconfigure::Server<multi_sensor_alignment::cb_align_toolConfig> > drServer_;
     boost::shared_ptr<dynamic_reconfigure::Client<multi_sensor_alignment::alignment_publisherConfig> > alignClient_;
 
+    multi_sensor_alignment::alignment_publisherConfig initialAlignPubConfig_;
     multi_sensor_alignment::alignment_publisherConfig alignPubConfig_;
     multi_sensor_alignment::cb_align_toolConfig alignToolConfig_;
     dynamic_reconfigure::ConfigDescription alignPubDesc_;
@@ -133,6 +129,7 @@ namespace Multi_Sensor_Alignment
 
     Eigen::Matrix4f current_guess_;
     geometry_msgs::TransformStamped::Ptr output_transform_;
+    geometry_msgs::Transform last_transform_;
     geometry_msgs::TransformStamped::Ptr image_transform_;
     geometry_msgs::TransformStamped::Ptr cloud_transform_;
     window_acc x_array_;

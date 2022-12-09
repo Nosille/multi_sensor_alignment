@@ -11,7 +11,7 @@ namespace Multi_Sensor_Alignment
   freeze0_(0),
   freeze1_(0),
   current_guess_(Eigen::Matrix4f::Identity()),
-  output_(new geometry_msgs::TransformStamped),
+  output_transform_(new geometry_msgs::TransformStamped),
   buffer_size_(buffer_size),
   x_array_(tag::rolling_window::window_size = buffer_size),
   y_array_(tag::rolling_window::window_size = buffer_size),
@@ -312,12 +312,12 @@ namespace Multi_Sensor_Alignment
       return true;
     }
 
-    alignPubConfig_.x = output_->transform.translation.x;
-    alignPubConfig_.y = output_->transform.translation.y;
-    alignPubConfig_.z = output_->transform.translation.z;
+    alignPubConfig_.x = output_transform_->transform.translation.x;
+    alignPubConfig_.y = output_transform_->transform.translation.y;
+    alignPubConfig_.z = output_transform_->transform.translation.z;
 
     tf2::Quaternion q;
-    convert(output_->transform.rotation, q);
+    convert(output_transform_->transform.rotation, q);
     tf2::Matrix3x3 m(q);
     double roll,pitch,yaw;
     m.getRPY(roll,pitch,yaw);
@@ -347,8 +347,8 @@ namespace Multi_Sensor_Alignment
     yTF_ = captureMotion.transform.translation.y;
     zTF_ = captureMotion.transform.translation.z;
 
-    double yICP = output_->transform.translation.y;
-    double xICP = output_->transform.translation.x;
+    double yICP = output_transform_->transform.translation.y;
+    double xICP = output_transform_->transform.translation.x;
 
     current_yaw_ = (yTF_ - yICP) / (xTF_ - xICP);
 
@@ -377,7 +377,7 @@ namespace Multi_Sensor_Alignment
 
   bool Cloud_Alignment::calculateRollPitchCorrection() {
     tf2::Quaternion q;
-    convert(output_->transform.rotation, q);
+    convert(output_transform_->transform.rotation, q);
     tf2::Matrix3x3 m(q);
     double roll,pitch,yaw;
     m.getRPY(roll,pitch,yaw);
@@ -445,48 +445,34 @@ namespace Multi_Sensor_Alignment
     Eigen::Matrix4d md(mf.cast<double>());
     Eigen::Affine3d affine(md);
     geometry_msgs::TransformStamped transformStamped = tf2::eigenToTransform(affine);
-    output_->transform = transformStamped.transform;
-    output_->header = pcl_conversions::fromPCL(cloud1->header);
-    output_->header.frame_id = parent_frame;
-    output_->child_frame_id = child_frame;
+    output_transform_->transform = transformStamped.transform;
+    output_transform_->header = pcl_conversions::fromPCL(cloud1->header);
+    output_transform_->header.frame_id = parent_frame;
+    output_transform_->child_frame_id = child_frame;
 
     //Add new transform to accumulator and compute average
     if(buffer_size_ > 1)
     {
-      x_array_(output_->transform.translation.x); double x_mean = rolling_mean(x_array_);
-      y_array_(output_->transform.translation.y); double y_mean = rolling_mean(y_array_);
-      z_array_(output_->transform.translation.z); double z_mean = rolling_mean(z_array_);
-      geometry_msgs::Quaternion q_mean = Cloud_Alignment::AverageQuaternion(output_->transform.rotation);
+      x_array_(output_transform_->transform.translation.x); double x_mean = rolling_mean(x_array_);
+      y_array_(output_transform_->transform.translation.y); double y_mean = rolling_mean(y_array_);
+      z_array_(output_transform_->transform.translation.z); double z_mean = rolling_mean(z_array_);
+      geometry_msgs::Quaternion q_mean = Multi_Sensor_Alignment::AverageQuaternion(output_transform_->transform.rotation,
+          qx_array_, qy_array_, qz_array_, qw_array_, current_qx_, current_qy_, current_qz_, current_qw_);
 
       //Update transformations with average
-      output_->transform.translation.x = x_mean;
-      output_->transform.translation.y = y_mean;
-      output_->transform.translation.z = z_mean;
-      output_->transform.rotation = q_mean;
+      output_transform_->transform.translation.x = x_mean;
+      output_transform_->transform.translation.y = y_mean;
+      output_transform_->transform.translation.z = z_mean;
+      output_transform_->transform.rotation = q_mean;
 
-      Eigen::Affine3d eigenTransform = tf2::transformToEigen(output_->transform);
+      Eigen::Affine3d eigenTransform = tf2::transformToEigen(output_transform_->transform);
       current_guess_ = eigenTransform.matrix().cast<float>();
     }
 
-    // Transforming filtered or unfiltered, input cloud using found transform.
-    pcl::PointCloud<PointT>::Ptr output_cloud0(new pcl::PointCloud<PointT>);
-    pcl::PointCloud<PointT>::Ptr output_cloud1(new pcl::PointCloud<PointT>);
-
-    if(is_output_filtered_)
-    {
-      pcl::copyPointCloud (*filtered_cloud0, *output_cloud0);
-      pcl::copyPointCloud (*filtered_cloud1, *output_cloud1);
-    }
-    else
-    {
-      pcl::copyPointCloud (*cloud0, *output_cloud0);
-      pcl::copyPointCloud (*cloud1, *output_cloud1);
-    }
-    
     // Calculate diff from last_transform
     tf2::Transform old_trans, new_trans;
     tf2::convert(last_transform_, old_trans);
-    tf2::convert(output_->transform, new_trans);
+    tf2::convert(output_transform_->transform, new_trans);
     tf2::Transform diff = old_trans.inverseTimes(new_trans);
     
     geometry_msgs::TransformStamped gm_diff;
@@ -517,10 +503,10 @@ namespace Multi_Sensor_Alignment
 
     if (!lidar_to_robot_) {
       tf2::Quaternion q(
-            output_->transform.rotation.x,
-            output_->transform.rotation.y,
-            output_->transform.rotation.z,
-            output_->transform.rotation.w);
+            output_transform_->transform.rotation.x,
+            output_transform_->transform.rotation.y,
+            output_transform_->transform.rotation.z,
+            output_transform_->transform.rotation.w);
       tf2::Matrix3x3 m(q);
       m.getRPY(roll,pitch,yaw);
     }
@@ -542,16 +528,30 @@ namespace Multi_Sensor_Alignment
       diff_yaw   = alignPubConfig_.yaw - yaw;
     }
 
-    ROS_INFO_STREAM_NAMED(node_name, "ICP Translation X: " << output_->transform.translation.x << " m" << ", diff: " << diff_x << " m");
-    ROS_INFO_STREAM_NAMED(node_name, "ICP Translation Y: " << output_->transform.translation.y << " m" << ", diff: " << diff_y << " m");
-    ROS_INFO_STREAM_NAMED(node_name, "ICP Translation Z: " << output_->transform.translation.z << " m" << ", diff: " << diff_z << " m");
+    ROS_INFO_STREAM_NAMED(node_name, "ICP Translation X: " << output_transform_->transform.translation.x << " m" << ", diff: " << diff_x << " m");
+    ROS_INFO_STREAM_NAMED(node_name, "ICP Translation Y: " << output_transform_->transform.translation.y << " m" << ", diff: " << diff_y << " m");
+    ROS_INFO_STREAM_NAMED(node_name, "ICP Translation Z: " << output_transform_->transform.translation.z << " m" << ", diff: " << diff_z << " m");
 
     ROS_INFO_STREAM_NAMED(node_name, "Roll:  " << roll <<  " rad, " << (roll/PI*180)  << " deg" << ", diff: " << diff_roll << " rad");
     ROS_INFO_STREAM_NAMED(node_name, "pitch: " << pitch << " rad, " << (pitch/PI*180) << " deg" << ", diff: " << diff_pitch << " rad");
     ROS_INFO_STREAM_NAMED(node_name, "Yaw:   " << yaw <<   " rad, " << (yaw/PI*180)   << " deg" << ", diff: " << diff_yaw << " rad");
 
     // Create output msgs
-    geometry_msgs::TransformStamped::Ptr output(output_);
+    pcl::PointCloud<PointT>::Ptr output_cloud0(new pcl::PointCloud<PointT>);
+    pcl::PointCloud<PointT>::Ptr output_cloud1(new pcl::PointCloud<PointT>);
+
+    if(is_output_filtered_)
+    {
+      pcl::copyPointCloud (*filtered_cloud0, *output_cloud0);
+      pcl::copyPointCloud (*filtered_cloud1, *output_cloud1);
+    }
+    else
+    {
+      pcl::copyPointCloud (*cloud0, *output_cloud0);
+      pcl::copyPointCloud (*cloud1, *output_cloud1);
+    }
+
+    geometry_msgs::TransformStamped::Ptr output(output_transform_);
     sensor_msgs::PointCloud2::Ptr output_msg0(new sensor_msgs::PointCloud2);
     sensor_msgs::PointCloud2::Ptr output_msg1(new sensor_msgs::PointCloud2);
     sensor_msgs::PointCloud2 p_msg1;
@@ -561,7 +561,7 @@ namespace Multi_Sensor_Alignment
     //first convert output_msg1 to parent_frame then apply output transform
     // geometry_msgs::TransformStamped pTransform = tfBuffer_.lookupTransform(parent_frame, output_msg1->header.frame_id, output_msg1->header.stamp);
     // tf2::doTransform(*output_msg1, *output_msg1, pTransform);
-    // tf2::doTransform(*output_msg1, *output_msg1, *output_);
+    // tf2::doTransform(*output_msg1, *output_msg1, *output_transform_);
 
     // correct error in cloud1's output msg 
     tf2::doTransform(*output_msg1, *output_msg1, gm_diff);
@@ -731,83 +731,7 @@ namespace Multi_Sensor_Alignment
     return Cloud_Alignment::pushRollPitchCorrection();
   }
   
-  geometry_msgs::Quaternion Cloud_Alignment::AverageQuaternion(const geometry_msgs::Quaternion& newRotation)
-  {
-    //ROS_INFO_STREAM_NAMED(node_name, current_qx_ << " " << current_qy_ << " " << current_qz_ << " " << current_qw_);
-    tf2::Quaternion lastRotation(current_qx_, current_qy_, current_qz_, current_qw_);
-    tf2::Quaternion currRotation; 
-    tf2::convert(newRotation, currRotation);
-    //On first pass lastRotation will be zero length
-    if(abs(lastRotation.length()) < 0.1)
-    {
-      ROS_INFO_STREAM_NAMED(node_name, "AverageQuaternion initialized");
-
-      //Add new values to accumulators
-      qx_array_(currRotation.x()); current_qx_ = currRotation.x();
-      qy_array_(currRotation.y()); current_qy_ = currRotation.y();
-      qz_array_(currRotation.z()); current_qz_ = currRotation.z();
-      qw_array_(currRotation.w()); current_qw_ = currRotation.w();
-
-      return newRotation;
-    }
-
-    //Before we add the new rotation to the average (mean), we have to check whether the quaternion has to be inverted. Because
-    //q and -q are the same rotation, but cannot be averaged, we have to make sure they are all the same.
-    // if(AreQuaternionsClose(currRotation, lastRotation))
-    // {
-    //     ROS_INFO_STREAM_NAMED(node_name, "flip quaternion");
-    //     ROS_INFO_STREAM_NAMED(node_name, currRotation.x() << " " << currRotation.y() << " " << currRotation.z() << " " << currRotation.w());
-    //     ROS_INFO_STREAM_NAMED(node_name, lastRotation.x() << " " << lastRotation.y() << " " << lastRotation.z() << " " << lastRotation.w());
-    //     currRotation = tf2::Quaternion(-currRotation.x(), -currRotation.y(), -currRotation.z(), -currRotation.w());
-    // }
-    current_qx_ = currRotation.x();
-    current_qy_ = currRotation.y();
-    current_qz_ = currRotation.z();
-    current_qw_ = currRotation.w();
     
-    //Add new values to accumulators
-    qx_array_(currRotation.x());
-    qy_array_(currRotation.y());
-    qz_array_(currRotation.z());
-    qw_array_(currRotation.w());
-    float w = rolling_mean(qw_array_);
-    float x = rolling_mean(qx_array_);
-    float y = rolling_mean(qy_array_);
-    float z = rolling_mean(qz_array_);
-
-    //Convert back to quaternion
-    tf2::Quaternion mean(x, y, z, w);
-
-    geometry_msgs::Quaternion result;
-    tf2::convert(mean.normalize(), result);
-
-    //note: if speed is an issue, you can skip the normalization step
-    return result;
-}
-
-//Returns true if the two input quaternions are close to each other. This can
-//be used to check whether or not one of two quaternions which are supposed to
-//be very similar but has its component signs reversed (q has the same rotation as
-//-q)
-bool Cloud_Alignment::AreQuaternionsClose(tf2::Quaternion q1, tf2::Quaternion q2)
-{
-
-    float dot = q1.dot(q2);
-    
-    if(dot < 0.0f)
-    {
-
-        return false;                   
-    }
-
-    else
-    {
-
-        return true;
-    }
-}
-
-  
 }  // namespace Multi_Sensor_Alignment
 
 
