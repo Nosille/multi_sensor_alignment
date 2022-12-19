@@ -10,7 +10,8 @@ namespace Multi_Sensor_Alignment
   pnh_(private_node_handle),
   current_guess_(Eigen::Matrix4f::Identity()),
   output_transform_(new geometry_msgs::TransformStamped),
-  image_transform_(new geometry_msgs::TransformStamped),
+  optical_transform_(new geometry_msgs::TransformStamped),
+  sensor_transform_(new geometry_msgs::TransformStamped),
   cloud_transform_(new geometry_msgs::TransformStamped),
   buffer_size_(buffer_size),
   x_array_(tag::rolling_window::window_size = buffer_size),
@@ -32,7 +33,7 @@ namespace Multi_Sensor_Alignment
   Chessboard_Alignment::~Chessboard_Alignment()
   {
     // delete sourceCloud_;
-    // delete sourceImage_;
+    // delete sourceCamera_;
   }
 
   void Chessboard_Alignment::onInit()
@@ -48,7 +49,7 @@ namespace Multi_Sensor_Alignment
     drServer_.reset(new dynamic_reconfigure::Server<multi_sensor_alignment::cb_align_toolConfig>(drServer_mutex_, pnh_));
     drServer_->setCallback(drServerCallback_);
 
-    //Wait on this nodes dyanamic param server to intialize values
+    //Wait on this nodes dynamic param server to intialize values
     while(!received_alignToolConfig_)
     {
       ros::Duration(1.0).sleep();
@@ -114,8 +115,8 @@ namespace Multi_Sensor_Alignment
       ROS_INFO_STREAM_NAMED(node_name, "input_image_topic set to " << input_image_topic_);
     pnh_.param<std::string>("input_info_topic", input_info_topic_, "input_info");
       ROS_INFO_STREAM_NAMED(node_name, "input_info_topic set to " << input_info_topic_);
-    // pnh_.param<std::string>("image_cloud_topic", image_cloud_topic_, "image_cloud");
-    //   ROS_INFO_STREAM_NAMED(node_name, "image_cloud_topic set to " << image_cloud_topic_);
+    pnh_.param<std::string>("image_cloud_topic", image_cloud_topic_, "image_cloud");
+      ROS_INFO_STREAM_NAMED(node_name, "image_cloud_topic set to " << image_cloud_topic_);
     // pnh_.param<std::string>("filter_cloud_topic", filter_cloud_topic_, "filter_cloud");
     //   ROS_INFO_STREAM_NAMED(node_name, "filter_cloud_topic set to " << filter_cloud_topic_);
     pnh_.param<std::string>("output_cloud0_topic", output_cloud0_topic_, "output_cloud0");
@@ -124,6 +125,8 @@ namespace Multi_Sensor_Alignment
       ROS_INFO_STREAM_NAMED(node_name, "output_cloud1_topic set to " << output_cloud1_topic_);
     pnh_.param<std::string>("output_camera_topic", output_camera_topic_, "output_camera");
       ROS_INFO_STREAM_NAMED(node_name, "output_camera_topic set to " << output_camera_topic_);
+      pnh_.param<std::string>("output_info_topic", output_info_topic_, "camera_info");
+      ROS_INFO_STREAM_NAMED(node_name, "output_info_topic set to " << output_info_topic_);
     pnh_.param<std::string>("output_marker_topic", output_marker_topic_, "output_marker");
       ROS_INFO_STREAM_NAMED(node_name, "output_marker_topic set to " << output_marker_topic_);
     pnh_.param<std::string>("output_tranform", output_trans_topic_, "output_trans");
@@ -154,29 +157,31 @@ namespace Multi_Sensor_Alignment
       ROS_INFO_STREAM_NAMED(node_name, "plane_tol set to " << alignToolConfig_.plane_tol);
 
   //initialized source classes
-    sourceCloud_ = new SourceCloud(nh_, input_cloud_topic_);
+    sourceCloud_ = new ERDC::SourceCloud(nh_, input_cloud_topic_);
     pcl::PCLPointCloud2 cloud; tf2::Transform transform;
     std_msgs::Header header;
     sourceCloud_->cloud_buffer.push_back(cloud);
     sourceCloud_->transform_buffer.push_back(transform);
     sourceCloud_->header_buffer.push_back(header);
-    sourceImage_ = new SourceCamera(nh_, input_image_topic_, input_info_topic_);
+    sourceCamera_ = new ERDC::SourceCamera(nh_, input_image_topic_, input_info_topic_, is_rectified_, "field_label", 0, output_camera_topic_, output_info_topic_, "", 0, 0, false);
+
 
     drServer_->updateConfig(alignToolConfig_);
 
   // ROS publishers
     output_trans_pub_  = nh_.advertise<geometry_msgs::TransformStamped>(output_trans_topic_,100);
-    // image_cloud_pub_   = nh_.advertise<sensor_msgs::PointCloud2>(image_cloud_topic_,10);
+    image_cloud_pub_   = nh_.advertise<sensor_msgs::PointCloud2>(image_cloud_topic_,10);
     // filter_cloud_pub_  = nh_.advertise<sensor_msgs::PointCloud2>(filter_cloud_topic_,10);
     output_cloud0_pub_  = nh_.advertise<sensor_msgs::PointCloud2>(output_cloud0_topic_,10);
     output_cloud1_pub_  = nh_.advertise<sensor_msgs::PointCloud2>(output_cloud1_topic_,10);
-    output_camera_pub_ = nh_.advertise<sensor_msgs::Image>(output_camera_topic_,10);
+    // output_info_pub_ = nh_.advertise<sensor_msgs::Image>(output_info_topic_,10);
+    // output_camera_pub_ = nh_.advertise<sensor_msgs::Image>(output_camera_topic_,10);
     // output_marker_pub_ = nh_.advertise<visualization_msgs::Marker>(output_marker_topic_, 10);
     pub_timer_ = nh_.createTimer(ros::Duration(1.0/output_frequency_), boost::bind(& Chessboard_Alignment::publish_callback, this, _1));
 
   // ROS subscribers
     sourceCloud_->cloud_sub = nh_.subscribe<sensor_msgs::PointCloud2>(sourceCloud_->cloud_in_topic, 1, boost::bind(&Chessboard_Alignment::input_cloud_callback, this, _1));
-    sourceImage_->cameraSync->registerCallback(boost::bind(&Chessboard_Alignment::input_camera_callback, this, _1, _2));
+    sourceCamera_->cameraSync->registerCallback(boost::bind(&Chessboard_Alignment::input_camera_callback, this, _1, _2));
 
   // ROS Services
     if(received_alignPubConfig_)
@@ -255,16 +260,17 @@ namespace Multi_Sensor_Alignment
 
   void Chessboard_Alignment::publish_callback(const ros::TimerEvent& event)
   {
+    // ROS_WARN_STREAM("Publish Callback");
   // Gather Input
     // Image
     const std::lock_guard<std::mutex> lock_camera(camera_mutex_);
-    if(sourceImage_->image.image.empty()) 
+    if(sourceCamera_->image.image.empty()) 
     { 
       ROS_WARN_STREAM("No image found");
       return;
     }
     cv::Mat gray;
-    cv::cvtColor(sourceImage_->image.image, gray, CV_BGR2GRAY);
+    cv::cvtColor(sourceCamera_->image.image, gray, CV_BGR2GRAY);
 
     // Pointcloud
     const std::lock_guard<std::mutex> lock_cloud(cloud_mutex_);
@@ -402,7 +408,7 @@ namespace Multi_Sensor_Alignment
 
   }
 
-  void Chessboard_Alignment::ImageProcessing(cv::Mat &gray, std::vector<cv::Point2f> &chessCorners, pcl::PointCloud<PointT>::Ptr &cloud)
+  void Chessboard_Alignment::ImageProcessing(cv::Mat &gray, std::vector<cv::Point2f> &chessCorners, pcl::PointCloud<PointT>::Ptr &cloud_out)
   {
   // Find chessboard features  
     std::vector<cv::Point3f> gridPoints;
@@ -458,19 +464,19 @@ namespace Multi_Sensor_Alignment
   // Find transform using 3D-2D point correspondences.
     cv::Mat rvec(3,3,cv::DataType<double>::type); // Initialization for pinhole and fisheye cameras
     cv::Mat tvec(3,1,cv::DataType<double>::type);
-    if (sourceImage_->distortion_model == "plumb_bob")
+    if (sourceCamera_->distortion_model == "plumb_bob")
     {
       //Finds an object pose from 3D-2D point correspondences. 
       //This function returns the rotation and the translation vectors that transform a 3D point expressed in the object coordinate frame to the camera coordinate frame
-      cv::solvePnP(gridPoints, chessCorners, sourceImage_->camera_instrinsics, sourceImage_->distortion_coefficients, rvec, tvec);
+      cv::solvePnP(gridPoints, chessCorners, sourceCamera_->intrinsic_matrix, sourceCamera_->distortion_coefficients, rvec, tvec);
       // // Convert all to image coordinates 
-      // cv::projectPoints(gridPoints, rvec, tvec, sourceImage_->camera_instrinsics, sourceImage_->distortion_coefficients, imagePoints0);
-      // cv::projectPoints(square_edge, rvec, tvec, sourceImage_->camera_instrinsics, sourceImage_->distortion_coefficients, imagePoints1);
-      // cv::projectPoints(boardcorners, rvec, tvec, sourceImage_->camera_instrinsics, sourceImage_->distortion_coefficients, imagePoints2);
+      // cv::projectPoints(gridPoints, rvec, tvec, sourceCamera_->intrinsic_matrix, sourceCamera_->distortion_coefficients, imagePoints0);
+      // cv::projectPoints(square_edge, rvec, tvec, sourceCamera_->intrinsic_matrix, sourceCamera_->distortion_coefficients, imagePoints1);
+      // cv::projectPoints(boardcorners, rvec, tvec, sourceCamera_->intrinsic_matrix, sourceCamera_->distortion_coefficients, imagePoints2);
     }
     else
     {
-      ROS_WARN_STREAM(sourceImage_->distortion_model << " distortion Model not implemented");
+      ROS_WARN_STREAM(sourceCamera_->distortion_model << " distortion Model not implemented");
     }
     
   //Convert OpenCv Transform into geometry_msgs::Transform
@@ -487,10 +493,12 @@ namespace Multi_Sensor_Alignment
       cb_pose(j,3) = tvec.at<double>(j);
     }
     geometry_msgs::Transform transform = tf2::eigenToTransform(cb_pose).transform;
-    image_transform_->transform.translation.x = transform.translation.x/1000.0;
-    image_transform_->transform.translation.y = transform.translation.y/1000.0;
-    image_transform_->transform.translation.z = transform.translation.z/1000.0;
-    image_transform_->transform.rotation = transform.rotation;
+    optical_transform_->header.frame_id = sourceCamera_->frameID;
+    optical_transform_->header.stamp = sourceCamera_->transform.header.stamp;
+    optical_transform_->transform.translation.x = transform.translation.x/1000.0;
+    optical_transform_->transform.translation.y = transform.translation.y/1000.0;
+    optical_transform_->transform.translation.z = transform.translation.z/1000.0;
+    optical_transform_->transform.rotation = transform.rotation;
 
   //Visualize Points
     // take every point in boardcorners set
@@ -512,29 +520,31 @@ namespace Multi_Sensor_Alignment
                                                                    image_points.at<double>(2,k));
       // Mark the corners and the board centre
       if (k==0)
-        cv::circle(sourceImage_->image.image, cv::Point(img_coord[0],img_coord[1]),
+        cv::circle(sourceCamera_->image.image, cv::Point(img_coord[0],img_coord[1]),
             12, CV_RGB(0,255,0),-1); //green
       else if (k==1)
-        cv::circle(sourceImage_->image.image, cv::Point(img_coord[0],img_coord[1]),
+        cv::circle(sourceCamera_->image.image, cv::Point(img_coord[0],img_coord[1]),
             12, CV_RGB(255,255,0),-1); //yellow
       else if (k==2)
-        cv::circle(sourceImage_->image.image, cv::Point(img_coord[0],img_coord[1]),
+        cv::circle(sourceCamera_->image.image, cv::Point(img_coord[0],img_coord[1]),
             12, CV_RGB(0,0,255),-1); //blue
       else if (k==3)
-        cv::circle(sourceImage_->image.image, cv::Point(img_coord[0],img_coord[1]),
+        cv::circle(sourceCamera_->image.image, cv::Point(img_coord[0],img_coord[1]),
             12, CV_RGB(255,0,0),-1); //red
       else
-        cv::circle(sourceImage_->image.image, cv::Point(img_coord[0],img_coord[1]),
+        cv::circle(sourceCamera_->image.image, cv::Point(img_coord[0],img_coord[1]),
             12, CV_RGB(255,255,255),-1); //white for centre
 
       delete[] img_coord;
     }
 
   // Republish the image with all the features marked on it
-    output_camera_pub_.publish(sourceImage_->image.toImageMsg());
+    sensor_msgs::CameraInfo::ConstPtr info;
+    info = PublishCameraInfo(sourceCamera_);
+    PublishCameraImage(sourceCamera_, info);
 
   //transform location of chessboard from optical frame to child frame
-    tf2::doTransform(*image_transform_, *image_transform_, sourceImage_->transform);
+    tf2::doTransform(*optical_transform_, *sensor_transform_, sourceCamera_->transform);
 
   //Create pointcloud from chessboard location in child frame
     pcl::PointCloud<PointT>::Ptr image_corners(new pcl::PointCloud<PointT>);
@@ -556,9 +566,9 @@ namespace Multi_Sensor_Alignment
     //fill
     int n = 20;
     int m = 20;
-    for(int i = 0; i < n; i++)
+    for(int i = 0; i < n+1; i++)
     {
-      for(int j = 0; j < m; j++)
+      for(int j = 0; j < m+1; j++)
       {
         double weight0 = (1.0-i/(double)n) * ((1.0-j/(double)m));
         double weight1 =     (i/(double)n) * ((1.0-j/(double)m));
@@ -569,17 +579,20 @@ namespace Multi_Sensor_Alignment
         temp_point.y = (weight0*boardcorners[0].y + weight1*boardcorners[1].y + weight2*boardcorners[2].y + weight3*boardcorners[3].y)/1000;
         temp_point.z = (weight0*boardcorners[0].z + weight1*boardcorners[1].z + weight2*boardcorners[2].z + weight3*boardcorners[3].z)/1000;
         // ROS_INFO_STREAM(temp_point.x << ":" << temp_point.y << ":" << temp_point.z);
-        cloud->points.push_back(temp_point);
+        cloud_out->points.push_back(temp_point);
       }
     }
 
-    sensor_msgs::PointCloud2 cloud_pc2; pcl::toROSMsg(*cloud, cloud_pc2);
-    tf2::doTransform(cloud_pc2, cloud_pc2, *image_transform_);
+    sensor_msgs::PointCloud2 cloud_optical; pcl::toROSMsg(*cloud_out, cloud_optical);
+    tf2::doTransform(cloud_optical, cloud_optical, *optical_transform_);
 
-    // // Publish the cloud
-    // image_cloud_pub_.publish(cloud_pc2);
+    // Publish the cloud in the images frame
+    image_cloud_pub_.publish(cloud_optical);
 
-
+    // store the cloud in the child frame
+    sensor_msgs::PointCloud2 cloud_sensor; pcl::toROSMsg(*cloud_out, cloud_sensor);
+    tf2::doTransform(cloud_sensor, cloud_sensor, *sensor_transform_);
+    pcl::fromROSMsg(cloud_sensor, *cloud_out);
   }
 
   void Chessboard_Alignment::CloudProcessing(const pcl::PointCloud<PointT>::Ptr &in_cloud, pcl::PointCloud<PointT>::Ptr &out_cloud)
@@ -595,13 +608,18 @@ namespace Multi_Sensor_Alignment
 
   //Further filter the cloud by drawing a cube around the center point found in the image transform
     pcl::CropBox<PointT> boxFilter;
+    geometry_msgs::TransformStamped cloud_transform, total_transform;
+    cloud_transform = tfBuffer_.lookupTransform(cloud_filtered->header.frame_id, sensor_transform_->header.frame_id,  pcl_conversions::fromPCL(cloud_filtered->header.stamp));
+    //transform location of chessboard from optical frame to child frame
+    tf2::doTransform(*sensor_transform_, total_transform, cloud_transform);
+
     float maxDim = std::max(board_width_, board_height_)/1000;
-    float minX = image_transform_->transform.translation.x - 0.55*maxDim;
-    float maxX = image_transform_->transform.translation.x + 0.55*maxDim;
-    float minY = image_transform_->transform.translation.y - 0.55*maxDim;
-    float maxY = image_transform_->transform.translation.y + 0.55*maxDim;
-    float minZ = image_transform_->transform.translation.z - 0.55*maxDim;
-    float maxZ = image_transform_->transform.translation.z + 0.55*maxDim;
+    float minX = total_transform.transform.translation.x - 0.55*maxDim;
+    float maxX = total_transform.transform.translation.x + 0.55*maxDim;
+    float minY = total_transform.transform.translation.y - 0.55*maxDim;
+    float maxY = total_transform.transform.translation.y + 0.55*maxDim;
+    float minZ = total_transform.transform.translation.z - 0.55*maxDim;
+    float maxZ = total_transform.transform.translation.z + 0.55*maxDim;
     // ROS_INFO_STREAM("  min:" << minX << ":" << minY << ":" << minZ);
     // ROS_INFO_STREAM("  max:" << maxX << ":" << maxY << ":" << maxZ);
     boxFilter.setMin(Eigen::Vector4f(minX, minY, minZ, 1.0));
@@ -634,7 +652,7 @@ namespace Multi_Sensor_Alignment
   //     ROS_INFO_STREAM("  image plane:" << coefficients_image->values[0] << ":" << coefficients_image->values[1] << ":" << coefficients_image->values[2] << ":" << coefficients_image->values[3]);
   //     coefficients = coefficients_image;
 
-  //     Eigen::Affine3d eigenTransform = tf2::transformToEigen(image_transform_->transform);
+  //     Eigen::Affine3d eigenTransform = tf2::transformToEigen(sensor_transform_->transform);
 
   //     // Eigen::Matrix3d m = eigenTransform.rotation();
   //     // Eigen::Vector3d v = eigenTransform.translation();
@@ -1103,11 +1121,85 @@ namespace Multi_Sensor_Alignment
     return;
   }
 
+  void Chessboard_Alignment::camera_info_callback(const sensor_msgs::CameraInfo::ConstPtr& msg)
+  {
+    // Make local copy
+    sensor_msgs::CameraInfo info_in(*msg);
+
+    //Lock mutex
+    std::lock_guard<std::mutex> myLock(*sourceCamera_->mutex);
+
+    if (sourceCamera_->outputWidth < 1 || sourceCamera_->outputWidth > msg->width) sourceCamera_->outputWidth = msg->width;
+    if (sourceCamera_->outputHeight < 1 || sourceCamera_->outputHeight > msg->height) sourceCamera_->outputHeight = msg->height;
+    sourceCamera_->distortion_model = msg->distortion_model;
+
+    //Calculate scaling values
+    double xScale = ((double)(sourceCamera_->outputWidth))/((double)(msg->width));
+    double yScale = ((double)(sourceCamera_->outputHeight))/((double)(msg->height)); 
+
+    //Extract pinhole camera variables
+    sourceCamera_->fx = static_cast<float>(info_in.K[0]) * xScale;
+    sourceCamera_->fy = static_cast<float>(info_in.K[4]) * yScale;
+    sourceCamera_->cx = static_cast<float>(info_in.K[2]) * xScale;
+    sourceCamera_->cy = static_cast<float>(info_in.K[5]) * yScale;
+
+    //Extract intrinsics matrix
+    sourceCamera_->intrinsic_matrix = cv::Mat(3, 3, CV_64F);
+    for (int row = 0; row < 3; row++)
+    {
+      for (int col = 0; col < 3; col++)
+      {
+        if(sourceCamera_->cameraRectified) sourceCamera_->intrinsic_matrix.at<double>(row, col) = info_in.P[row * 4 + col];
+        else sourceCamera_->intrinsic_matrix.at<double>(row, col) = info_in.K[row * 3 + col];
+
+        if(row == 0) sourceCamera_->intrinsic_matrix.at<double>(row, col) *= xScale;
+        if(row == 1) sourceCamera_->intrinsic_matrix.at<double>(row, col) *= yScale;
+      }
+    }
+
+    //Extract distortion coefficients
+    sourceCamera_->distortion_coefficients = cv::Mat(1, info_in.D.size(), CV_64F);
+   for (int col = 0; col < sourceCamera_->distortion_coefficients.total(); col++)
+    {
+      if(sourceCamera_->cameraRectified) sourceCamera_->distortion_coefficients.at<double>(col) = 0.0;
+      else sourceCamera_->distortion_coefficients.at<double>(col) = info_in.D[col];
+    }
+
+    //Extract rectification matrix
+    sourceCamera_->rectification_matrix = cv::Mat(3, 3, CV_64F);
+    for (int row = 0; row < 3; row++)
+    {
+      for (int col = 0; col < 3; col++)
+      {
+        sourceCamera_->rectification_matrix.at<double>(row, col) = info_in.R[row * 3 + col];
+      }
+    }
+
+    //Extract projection matrix
+    sourceCamera_->projection_matrix = cv::Mat(3, 4, CV_64F);
+    for (int row = 0; row < 3; row++)
+    {
+      for (int col = 0; col < 4; col++)
+      {
+        sourceCamera_->projection_matrix.at<double>(row, col) = info_in.P[row * 4 + col];
+
+        if(row == 0) sourceCamera_->projection_matrix.at<double>(row, col) *= xScale;
+        if(row == 1) sourceCamera_->projection_matrix.at<double>(row, col) *= yScale;
+      }
+    }
+
+    sourceCamera_->camera_info_received = true;
+  }
+
   void Chessboard_Alignment::input_camera_callback(const sensor_msgs::Image::ConstPtr& image_msg, const sensor_msgs::CameraInfo::ConstPtr& info_msg)
   {
-    const std::lock_guard<std::mutex> myLock(camera_mutex_);
+    camera_info_callback(info_msg);
+
+    const std::lock_guard<std::mutex> myLock(*sourceCamera_->mutex);
+
     //Obtain info for transform
-    sourceImage_->frameID = image_msg->header.frame_id;
+    sourceCamera_->frameID = image_msg->header.frame_id;
+
     geometry_msgs::TransformStamped transform;
 
     if(child_frame_id_ != "")
@@ -1115,7 +1207,7 @@ namespace Multi_Sensor_Alignment
       try
       {
         transform = tfBuffer_.lookupTransform(child_frame_id_, image_msg->header.frame_id, image_msg->header.stamp);
-        sourceImage_->transform = transform;
+        sourceCamera_->transform = transform;
       }
       catch (tf2::TransformException ex)
       {
@@ -1124,58 +1216,15 @@ namespace Multi_Sensor_Alignment
       }
     }
 
-    //Extract camera_info
-    std::string distortion_model = info_msg->distortion_model;
-
-    cv::Mat camera_instrinsics = cv::Mat(3, 3, CV_64F);
-    for (int row = 0; row < 3; row++)
-    {
-      for (int col = 0; col < 3; col++)
-      {
-        camera_instrinsics.at<double>(row, col) = info_msg->K[row * 3 + col];
-      }
-    }
-
-    cv::Mat distortion_coefficients = cv::Mat(1, 5, CV_64F);
-    for (int col = 0; col < 5; col++)
-    {
-      if(is_rectified_)
-        distortion_coefficients.at<double>(col) = 0.0;
-      else
-        distortion_coefficients.at<double>(col) = info_msg->D[col];
-    }
-
-    cv::Mat projection_matrix = cv::Mat(3, 4, CV_64F);
-    for (int row = 0; row < 3; row++)
-    {
-      for (int col = 0; col < 4; col++)
-      {
-        projection_matrix.at<double>(row, col) = info_msg->P[row * 4 + col];
-        // if(is_rectified_ && col < 3)
-        //     camera_instrinsics.at<double>(row, col) = info_msg->P[row * 4 + col];
-      }
-    }
-
-    //Save to storage class
-    sourceImage_->distortion_model = distortion_model; //ROS_INFO_STREAM(distortion_model);
-    sourceImage_->camera_instrinsics = camera_instrinsics;  //ROS_INFO_STREAM(camera_instrinsics);
-    sourceImage_->distortion_coefficients = distortion_coefficients; //ROS_INFO_STREAM(distortion_coefficients);
-    sourceImage_->projection_matrix = projection_matrix; //ROS_INFO_STREAM(projection_matrix);
-
-    sourceImage_->fx = static_cast<float>(info_msg->P[0]);
-    sourceImage_->fy = static_cast<float>(info_msg->P[5]);
-    sourceImage_->cx = static_cast<float>(info_msg->P[2]);
-    sourceImage_->cy = static_cast<float>(info_msg->P[6]);
-
     //Extract image
     try
     {
       cv_bridge::CvImagePtr cv_image = cv_bridge::toCvCopy(image_msg, image_msg->encoding);
-      sourceImage_->image = *cv_image;
+      sourceCamera_->image = *cv_image;
             
-      int count = sourceImage_->image.image.rows * sourceImage_->image.image.cols;
+      int count = sourceCamera_->image.image.rows * sourceCamera_->image.image.cols;
       ROS_DEBUG_STREAM_NAMED(node_name, "Image encoding " << image_msg->encoding);
-      ROS_DEBUG_STREAM_NAMED(node_name, sourceImage_->cameraImage_topic  << " has " << count << " pixels.");
+      ROS_DEBUG_STREAM_NAMED(node_name, sourceCamera_->cameraImage_topic  << " has " << count << " pixels.");
     }
     catch (cv_bridge::Exception& e) 
     {
@@ -1228,16 +1277,16 @@ namespace Multi_Sensor_Alignment
     planepointsC.y = tmpyC;
     double r2 = tmpxC*tmpxC + tmpyC*tmpyC;
 
-    if (sourceImage_->distortion_model == "plumb_bob")
+    if (sourceCamera_->distortion_model == "plumb_bob")
     {
-      double tmpdist = 1 + sourceImage_->distortion_coefficients.at<double>(0)*r2 + sourceImage_->distortion_coefficients.at<double>(1)*r2*r2 +
-          sourceImage_->distortion_coefficients.at<double>(4)*r2*r2*r2;
-      planepointsC.x = tmpxC*tmpdist + 2*sourceImage_->distortion_coefficients.at<double>(2)*tmpxC*tmpyC +
-          sourceImage_->distortion_coefficients.at<double>(3)*(r2+2*tmpxC*tmpxC);
-      planepointsC.y = tmpyC*tmpdist + sourceImage_->distortion_coefficients.at<double>(2)*(r2+2*tmpyC*tmpyC) +
-          2*sourceImage_->distortion_coefficients.at<double>(3)*tmpxC*tmpyC;
-      planepointsC.x = sourceImage_->camera_instrinsics.at<double>(0,0)*planepointsC.x + sourceImage_->camera_instrinsics.at<double>(0,2);
-      planepointsC.y = sourceImage_->camera_instrinsics.at<double>(1,1)*planepointsC.y + sourceImage_->camera_instrinsics.at<double>(1,2);
+      double tmpdist = 1 + sourceCamera_->distortion_coefficients.at<double>(0)*r2 + sourceCamera_->distortion_coefficients.at<double>(1)*r2*r2 +
+          sourceCamera_->distortion_coefficients.at<double>(4)*r2*r2*r2;
+      planepointsC.x = tmpxC*tmpdist + 2*sourceCamera_->distortion_coefficients.at<double>(2)*tmpxC*tmpyC +
+          sourceCamera_->distortion_coefficients.at<double>(3)*(r2+2*tmpxC*tmpxC);
+      planepointsC.y = tmpyC*tmpdist + sourceCamera_->distortion_coefficients.at<double>(2)*(r2+2*tmpyC*tmpyC) +
+          2*sourceCamera_->distortion_coefficients.at<double>(3)*tmpxC*tmpyC;
+      planepointsC.x = sourceCamera_->intrinsic_matrix.at<double>(0,0)*planepointsC.x + sourceCamera_->intrinsic_matrix.at<double>(0,2);
+      planepointsC.y = sourceCamera_->intrinsic_matrix.at<double>(1,1)*planepointsC.y + sourceCamera_->intrinsic_matrix.at<double>(1,2);
     }
 
     double * img_coord = new double[2];
@@ -1246,6 +1295,86 @@ namespace Multi_Sensor_Alignment
 
     return img_coord;
   }  
+
+  void Chessboard_Alignment::PublishCameraImage(const ERDC::SourceCamera* image_entry, sensor_msgs::CameraInfo::ConstPtr info)
+  {
+    cv_bridge::CvImage::Ptr cv_image(new cv_bridge::CvImage);
+
+    //new intrinsic matrix
+    cv::Mat new_intrinsic_matrix = cv::Mat(3, 3, CV_64F);
+    for (int row = 0; row < 3; row++)
+    {
+      for (int col = 0; col < 3; col++)
+      {
+        new_intrinsic_matrix.at<double>(row, col) = info->K[row * 3 + col];
+      }
+    }
+
+    //Rectify image if needed
+    if(image_entry->outputRectify && !image_entry->cameraRectified) 
+    {
+      cv_image->header = image_entry->image.header;
+      cv_image->encoding = image_entry->image.encoding;
+      cv::undistort(image_entry->image.image, cv_image->image, image_entry->intrinsic_matrix, image_entry->distortion_coefficients, new_intrinsic_matrix);
+    }
+    else 
+    {
+      cv_image->header = image_entry->image.header;
+      cv_image->encoding = image_entry->image.encoding;
+      cv_image->image = image_entry->image.image;
+    }
+
+    //publish image
+    image_entry->outputImage_pub.publish(cv_image->toImageMsg(), info); 
+  }
+
+  sensor_msgs::CameraInfo::ConstPtr Chessboard_Alignment::PublishCameraInfo(const ERDC::SourceCamera* image_entry)
+  {
+    //Create camera info topic
+    sensor_msgs::CameraInfo::Ptr info(new sensor_msgs::CameraInfo);
+    info->header = image_entry->image.header;
+    info->width = image_entry->outputWidth;
+    info->height = image_entry->outputHeight;
+    info->distortion_model = image_entry->distortion_model;
+
+    //Distortion coefficients
+    for (int col = 0; col < image_entry->distortion_coefficients.total(); col++)
+    {
+      if(image_entry->outputRectify) info->D.push_back(0.0);
+      else info->D.push_back(image_entry->distortion_coefficients.at<double>(col));
+    }
+
+    //Intrinsic matrix
+    for (int row = 0; row < 3; row++)
+    {
+      for (int col = 0; col < 3; col++)
+      {
+        if(image_entry->outputRectify) info->K[row * 3 + col] = image_entry->projection_matrix.at<double>(row, col);
+        else info->K[row * 3 + col] = image_entry->intrinsic_matrix.at<double>(row, col);
+      }
+    }
+  
+    //Rectification matrix
+    for (int row = 0; row < 3; row++)
+    {
+      for (int col = 0; col < 3; col++)
+      {
+        info->R[row * 3 + col] = image_entry->rectification_matrix.at<double>(row, col);
+      }
+    }
+
+    //Projection matrix
+    for (int row = 0; row < 3; row++)
+    {
+      for (int col = 0; col < 4; col++)
+      {
+        info->P[row * 4 + col] = image_entry->projection_matrix.at<double>(row, col);
+      }
+    }
+
+    //publish camera info
+    return info;
+  }
 
 }  // namespace Multi_Sensor_Alignment
 

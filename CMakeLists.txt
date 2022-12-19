@@ -201,7 +201,8 @@ add_library(${PROJECT_NAME}_icp_align_tool_lib SHARED
 add_library(${PROJECT_NAME}_cb_align_tool_lib SHARED
   src/cb_align_tool_class.cpp
   include/cb_align_tool/cb_align_tool.h
-  include/sensor_alignment.h
+  include/source_cloud.h
+  include/source_camera.h
   include/icp_common_tools.h
 )
 

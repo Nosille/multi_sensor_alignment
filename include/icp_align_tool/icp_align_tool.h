@@ -15,8 +15,6 @@ Copyright (c) 2017
 
 #include <mutex>
 
-#include <ros/ros.h>
-#include <ros/console.h>
 #include <std_srvs/Empty.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/static_transform_broadcaster.h>

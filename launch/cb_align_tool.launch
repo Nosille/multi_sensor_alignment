@@ -20,14 +20,15 @@
   <arg name="alignment_file"             default="$(arg vehicle_config_path)/config/sensor_alignment/$(arg camera_type)_camera_$(arg camera_name_short)_joint_state.yaml" />
   <arg name="alignment_server"           default="/$(arg namespace)/camera_$(arg camera_index)/align_publisher"/>
       
-  <arg name="output_frequency"           default="1.00" />
+  <arg name="output_frequency"           default="1.0" />
   <arg name="buffer_size"                default="1" />
        
   <arg name="input_cloud_topic"          default="/lidar/cloud$(arg lidar_index)/points" />
   <arg name="input_image_topic"          default="/vision/camera$(arg camera_index)/image_color" />
   <arg name="input_info_topic"           default="/vision/camera$(arg camera_index)/camera_info" />
   <arg name="is_rectified"               default="false"/>
-  <arg name="output_cloud_topic"         default="/$(arg namespace)/camera_$(arg camera_index)/points"/>
+  <arg name="output_cloud0_topic"        default="/$(arg namespace)/camera_$(arg camera_index)/cloud0"/>
+  <arg name="output_cloud1_topic"        default="/$(arg namespace)/camera_$(arg camera_index)/cloud1"/>
   <arg name="output_image_topic"         default="/$(arg namespace)/camera_$(arg camera_index)/image"/>
   <arg name="output_marker_topic"        default="/$(arg namespace)/camera_$(arg camera_index)/markers"/>
   <arg name="output_transform_topic"     default="/$(arg namespace)/camera_$(arg camera_index)/transform"/>
@@ -64,9 +65,10 @@
     <param name="input_cloud_topic"                 value="$(arg input_cloud_topic)"/>
     <param name="input_image_topic"                 value="$(arg input_image_topic)"/>
     <param name="input_info_topic"                  value="$(arg input_info_topic)"/>
-    <param name="output_cloud_topic"                value="$(arg output_cloud_topic)"/>
+    <param name="output_cloud0_topic"               value="$(arg output_cloud0_topic)"/>
+    <param name="output_cloud1_topic"               value="$(arg output_cloud1_topic)"/>
     <param name="output_image_topic"                value="$(arg output_image_topic)"/>
-    <param name="output_marker_topic"               value="$(arg output_marker_topic)"/>
+    <!-- <param name="output_marker_topic"               value="$(arg output_marker_topic)"/> -->
     <param name="output_transform_topic"            value="$(arg output_transform_topic)"/>
 
     <param name="grid_cols"                         value="$(arg grid_cols)"/>
