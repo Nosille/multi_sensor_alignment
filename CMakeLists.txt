@@ -133,6 +133,7 @@ add_definitions(${PCL_DEFINITIONS})
 generate_dynamic_reconfigure_options(
   cfg/alignment_publisher.cfg
   cfg/icp_align_tool.cfg
+  cfg/imu_tare_tool.cfg
 )
 
 
@@ -172,6 +173,10 @@ add_executable(${PROJECT_NAME}_icp_align_tool_node
   src/icp_align_tool_node.cpp
 )
 
+add_executable(${PROJECT_NAME}_imu_tare_tool_node
+  src/imu_tare_tool_node.cpp
+)
+
 add_executable(${PROJECT_NAME}_alignment_publisher_node
   src/alignment_publisher.cpp
 )
@@ -182,6 +187,7 @@ add_executable(${PROJECT_NAME}_alignment_publisher_node
 ## e.g. "rosrun someones_pkg node" instead of "rosrun someones_pkg someones_pkg_node"
 # set_target_properties(${PROJECT_NAME}_node PROPERTIES OUTPUT_NAME node PREFIX "")
 set_target_properties(${PROJECT_NAME}_icp_align_tool_node PROPERTIES OUTPUT_NAME icp_align_tool PREFIX "")
+set_target_properties(${PROJECT_NAME}_imu_tare_tool_node PROPERTIES OUTPUT_NAME imu_tare_tool PREFIX "")
 set_target_properties(${PROJECT_NAME}_alignment_publisher_node PROPERTIES OUTPUT_NAME alignment_publisher PREFIX "")
 
 ## Declare a C++ library
@@ -191,6 +197,11 @@ add_library(${PROJECT_NAME}_icp_align_tool_lib SHARED
   include/icp_align_tool/icp_align_tool.h
 )
 
+add_library(${PROJECT_NAME}_imu_tare_tool_lib SHARED
+  src/imu_tare_tool_class.cpp
+  include/imu_tare_tool/imu_tare_tool.h
+)
+
 ## Specify libraries to link a library or executable target against
 # target_link_libraries(${PROJECT_NAME}_node
 #   ${catkin_LIBRARIES}
@@ -198,6 +209,11 @@ add_library(${PROJECT_NAME}_icp_align_tool_lib SHARED
 
 target_link_libraries(${PROJECT_NAME}_icp_align_tool_node
 ${PROJECT_NAME}_icp_align_tool_lib
+  ${catkin_LIBRARIES}
+)
+
+target_link_libraries(${PROJECT_NAME}_imu_tare_tool_node
+${PROJECT_NAME}_imu_tare_tool_lib
   ${catkin_LIBRARIES}
 )
 
@@ -216,6 +232,10 @@ add_dependencies(${PROJECT_NAME}_alignment_publisher_node
 )
 
 add_dependencies(${PROJECT_NAME}_icp_align_tool_lib
+  ${catkin_EXPORTED_TARGETS}
+)
+
+add_dependencies(${PROJECT_NAME}_imu_tare_tool_lib
   ${catkin_EXPORTED_TARGETS}
 )
 

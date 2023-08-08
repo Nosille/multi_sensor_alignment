@@ -1,0 +1,30 @@
+<launch>
+  <arg name="namespace"                  default="sensor_alignment"/>
+  <arg name="sensor_id"                  default="sensor_1"/>
+
+  <arg name="base_link_frame"            default="base_link"/>
+  <arg name="input_topic"                default="/sensors/imu/sensor1/imu/data" doc="sensor_msgs::Imu"/>
+  <arg name="output_topic"                default="transform" doc="geometry_msgs::TransformStamped"/>
+  
+  <arg name="alignment_server"           default="/$(arg namespace)/$(arg sensor_id)/align_publisher"/>
+  <arg name="alignment_file"             default="$(find erdc_vehicle)/vehicle/config/sensor_alignment/imu_gx5_joint_state.yaml" />
+
+  <arg name="output_frequency"           default="1.00" />
+  <arg name="buffer_size"                default="1" />
+
+  <!-- Imu Tare Tool-->
+  <node ns="$(arg namespace)/$(arg sensor_id)" name="imu_tare_tool" pkg="multi_sensor_alignment" type="imu_tare_tool" output="screen">
+    <rosparam command="load"                    file="$(arg alignment_file)"/>
+    
+    <param name="base_link_frame"               value="$(arg base_link_frame)"/>
+    <param name="input_topic"                   value="$(arg input_topic)" />
+    <param name="output_topic"                  value="$(arg output_topic)" />
+
+    <param name="output_frequency"              value="$(arg output_frequency)"/>
+    <param name="buffer_size"                   value="$(arg buffer_size)"/>
+
+    <param name="alignment_server"              value="$(arg alignment_server)"/>
+    <param name="alignment_file"                value="$(arg alignment_file)"/>
+  </node>
+
+</launch>

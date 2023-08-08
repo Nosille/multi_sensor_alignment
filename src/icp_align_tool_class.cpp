@@ -43,7 +43,7 @@ namespace Multi_Sensor_Alignment
 
     tfBuffer_.setUsingDedicatedThread(true);
 
-  //Setup Dynamic Reconfigure Server for alignCheckConfig
+  //Setup Dynamic Reconfigure Server for icpAlignToolConfig
     dynamic_reconfigure::Server<multi_sensor_alignment::icp_align_toolConfig>::CallbackType
         drServerCallback_ = boost::bind(&Cloud_Alignment::reconfigure_server_callback, this, _1, _2);
     drServer_.reset(new dynamic_reconfigure::Server<multi_sensor_alignment::icp_align_toolConfig>(drServer_mutex_, pnh_));
