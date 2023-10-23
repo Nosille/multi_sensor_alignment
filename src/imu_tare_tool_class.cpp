@@ -125,8 +125,38 @@ namespace Multi_Sensor_Alignment
       ROS_WARN_STREAM_NAMED(node_name, "IMU_TARE_TOOL did not find the alignment publisher.");
     }
 
+  // Expected Parent to World Transform
+    geometry_msgs::TransformStamped bs_transform;    // expected transform from world frame to base_link frame
+    geometry_msgs::TransformStamped parent_transform; // expected transform from world frame to parent frame
+
+    bs_transform.transform.translation.x = 0;
+    bs_transform.transform.translation.y = 0;
+    bs_transform.transform.translation.z = 0;
+    bs_transform.transform.rotation.x = 0.0;
+    bs_transform.transform.rotation.y = 0.0;
+    bs_transform.transform.rotation.z = 1.0;
+    bs_transform.transform.rotation.w = 0.0;
+
+    geometry_msgs::TransformStamped transform;
+
+       if(parent_frame_id_ != "")
+    {
+      try{
+        transform = tfBuffer_.lookupTransform(parent_frame_id_, base_link_frame_id_, ros::Time::now());
+        
+        tf2::doTransform(bs_transform, parent_transform, transform);
+
+        parent_to_world_transform_ = parent_transform;
+      }
+      catch (tf2::TransformException ex){
+        ROS_WARN("%s",ex.what());
+        return;
+      }
+    }
+
   // Reset the guess transform for good measure
     IMU_Tare::revert();
+    capture_ = false;
 
     ROS_INFO_STREAM_NAMED(node_name, node_name.c_str() << " initialized!");
   }
@@ -216,15 +246,15 @@ namespace Multi_Sensor_Alignment
 
   //   output_->header = sensor_msgs::Imu:fromPCL(cloud1->header);
 
-    if (!capture_) return;
+    // if (!capture_) return;
 
     output_->transform.translation.x = 0;
     output_->transform.translation.y = 0;
     output_->transform.translation.z = 0;
-    output_->transform.rotation.x = bs_to_world_transform_.transform.rotation.x;
-    output_->transform.rotation.y = bs_to_world_transform_.transform.rotation.y;
-    output_->transform.rotation.z = bs_to_world_transform_.transform.rotation.z;
-    output_->transform.rotation.w = bs_to_world_transform_.transform.rotation.w;
+    output_->transform.rotation.x = child_to_world_transform_.transform.rotation.x;
+    output_->transform.rotation.y = child_to_world_transform_.transform.rotation.y;
+    output_->transform.rotation.z = child_to_world_transform_.transform.rotation.z;
+    output_->transform.rotation.w = child_to_world_transform_.transform.rotation.w;
     
     //Add new transform to accumulator and compute average
     if(buffer_size_ > 1)
@@ -249,7 +279,7 @@ namespace Multi_Sensor_Alignment
     
     geometry_msgs::TransformStamped gm_diff;
     tf2::convert(diff, gm_diff.transform);
-    gm_diff.header = bs_to_world_transform_.header;
+    gm_diff.header = child_to_world_transform_.header;
     // gm_diff.header.frame_id = child_frame;
     // gm_diff.child_frame_id = child_frame;
 
@@ -268,6 +298,7 @@ namespace Multi_Sensor_Alignment
     tf2::Matrix3x3 m(q);
     m.getRPY(roll,pitch,yaw);
 
+    ROS_INFO_STREAM_NAMED(node_name, "x:  " << output_->transform.rotation.x <<  " y:, " << output_->transform.rotation.y  << " z:" << output_->transform.rotation.z << "w: " << output_->transform.rotation.w);
     ROS_INFO_STREAM_NAMED(node_name, "Roll:  " << roll <<  " rad, " << (roll/PI*180)  << " deg" << ", diff: " << diff_roll << " rad");
     ROS_INFO_STREAM_NAMED(node_name, "pitch: " << pitch << " rad, " << (pitch/PI*180) << " deg" << ", diff: " << diff_pitch << " rad");
     ROS_INFO_STREAM_NAMED(node_name, "Yaw:   " << yaw <<   " rad, " << (yaw/PI*180)   << " deg" << ", diff: " << diff_yaw << " rad");
@@ -278,8 +309,8 @@ namespace Multi_Sensor_Alignment
 
   void IMU_Tare::input_callback(const sensor_msgs::Imu::ConstPtr& msg)
   {
-    geometry_msgs::TransformStamped imu_transform; // transform from imu frame to world frame
-    geometry_msgs::TransformStamped bs_transform; // transform from baselink frame to world frame
+    geometry_msgs::TransformStamped imu_transform;   // transform from imu frame to world frame
+    geometry_msgs::TransformStamped child_transform; // transform from child frame to world frame
 
     imu_transform.transform.translation.x = 0;
     imu_transform.transform.translation.y = 0;
@@ -289,17 +320,18 @@ namespace Multi_Sensor_Alignment
     imu_transform.transform.rotation.z = msg->orientation.z;
     imu_transform.transform.rotation.w = msg->orientation.w;
 
-    geometry_msgs::TransformStamped transform;
-  ;
+    // imu_transform.transform = imu_transform.transform.inverse();
 
-    if(base_link_frame_id_ != "")
+    geometry_msgs::TransformStamped transform;
+
+    if(child_frame_id_ != "")
     {
       try{
-        transform = tfBuffer_.lookupTransform(base_link_frame_id_, msg->header.frame_id, msg->header.stamp);
+        transform = tfBuffer_.lookupTransform(child_frame_id_, msg->header.frame_id, msg->header.stamp);
         
-        tf2::doTransform(imu_transform, bs_transform, transform);
+        tf2::doTransform(imu_transform, child_transform, transform);
 
-        bs_to_world_transform_ = bs_transform;
+        child_to_world_transform_ = child_transform;
       }
       catch (tf2::TransformException ex){
         ROS_WARN("%s",ex.what());

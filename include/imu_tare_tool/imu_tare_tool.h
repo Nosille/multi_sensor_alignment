@@ -137,7 +137,7 @@ namespace Multi_Sensor_Alignment
 
     int buffer_size_;
     bool capture_;
-    geometry_msgs::TransformStamped bs_to_world_transform_;
+    geometry_msgs::TransformStamped child_to_world_transform_, parent_to_world_transform_;
 
     Eigen::Matrix4f current_guess_;
     geometry_msgs::TransformStamped::Ptr output_;
