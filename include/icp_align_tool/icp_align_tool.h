@@ -6,8 +6,7 @@ Copyright (c) 2017
 
 */
 
-#ifndef ICP_ALIGN_TOOL_H
-#define ICP_ALIGN_TOOL_H
+#pragma once
 
 #include <iostream>
 #include <vector> 
@@ -15,10 +14,10 @@ Copyright (c) 2017
 
 #include <mutex>
 
-#include <ros/ros.h>
-#include <ros/console.h>
 #include <std_srvs/Empty.h>
 #include <tf2_ros/transform_listener.h>
+#include <tf2_ros/static_transform_broadcaster.h>
+// #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_sensor_msgs/tf2_sensor_msgs.h>
 #include <tf2_eigen/tf2_eigen.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
@@ -98,21 +97,18 @@ namespace Multi_Sensor_Alignment
     
     void input0_callback(const sensor_msgs::PointCloud2::ConstPtr& msg);
     void input1_callback(const sensor_msgs::PointCloud2::ConstPtr& msg);
-    
+
     //publisher
     void publish_callback(const ros::TimerEvent& event);
 
     std::string node_name{"cloud_alignment"};
 
-  private:
+  protected:
     double PI = atan(1)*4;
     
     //Methods
     bool revert();
     bool reset();
-    bool pushTransform();
-    bool pushYaw();
-    bool pushRollPitchCorrection();
 
     static bool AreQuaternionsClose(tf2::Quaternion q1, tf2::Quaternion q2);
     geometry_msgs::Quaternion AverageQuaternion(const geometry_msgs::Quaternion& newRotation);
@@ -130,12 +126,6 @@ namespace Multi_Sensor_Alignment
     bool revert_callback(std_srvs::Empty::Request &req,
             std_srvs::Empty::Response &resp);
     bool reset_callback(std_srvs::Empty::Request &req,
-            std_srvs::Empty::Response &resp);
-    bool pushtransform_callback(std_srvs::Empty::Request &req,
-            std_srvs::Empty::Response &resp);
-    bool pushYaw_callback(std_srvs::Empty::Request &req,
-            std_srvs::Empty::Response &resp);
-    bool pushRollPitchCorrection_callback(std_srvs::Empty::Request &req,
             std_srvs::Empty::Response &resp);
     
     // ROS 
@@ -169,6 +159,8 @@ namespace Multi_Sensor_Alignment
     ros::Subscriber input_sub0_, input_sub1_;
     ros::ServiceServer service0_, service1_, service2_, service3_, service4_, service5_, service6_, service7_, service8_;
     bool freeze0_, freeze1_, is_output_filtered_;
+
+    ros::Time stamp_;
 
     int buffer_size_;
 
@@ -213,6 +205,3 @@ namespace Multi_Sensor_Alignment
    
   }; // class Cloud_Alignment
 } // namespace Multi_Sensor_Alignment
-
-#endif  // ICP_ALIGN_TOOL_H
-

@@ -41,6 +41,8 @@ namespace Multi_Sensor_Alignment
     std::size_t id = complete_ns.find_last_of("/");
     node_name = complete_ns.substr(id + 1);
 
+    tfBuffer_.setUsingDedicatedThread(true);
+
   //Setup Dynamic Reconfigure Server for alignCheckConfig
     dynamic_reconfigure::Server<multi_sensor_alignment::icp_align_toolConfig>::CallbackType
         drServerCallback_ = boost::bind(&Cloud_Alignment::reconfigure_server_callback, this, _1, _2);
@@ -73,10 +75,6 @@ namespace Multi_Sensor_Alignment
     }
 
   // ROS Parameters
-    pnh_.param<std::string>("parent_frame", parent_frame_id_, "");
-      ROS_INFO_STREAM_NAMED(node_name, "parent_frame set to " << parent_frame_id_);
-    pnh_.param<std::string>("child_frame", child_frame_id_, "");
-      ROS_INFO_STREAM_NAMED(node_name, "child_frame set to " << child_frame_id_);
 
     pnh_.param("output_frequency", output_frequency_, 10.0);
       ROS_INFO_STREAM_NAMED(node_name, "output_frequency set to " << output_frequency_);     
@@ -106,7 +104,10 @@ namespace Multi_Sensor_Alignment
       ROS_INFO_STREAM_NAMED(node_name, "output topic set to " << output_trans_topic_);
     pnh_.param("is_output_filtered", is_output_filtered_, false);
       ROS_INFO_STREAM_NAMED(node_name, "is_output_filtered set to " << is_output_filtered_);
-      
+
+    pnh_.param<std::string>("parent_frame", parent_frame_id_, "");
+    pnh_.param<std::string>("child_frame", child_frame_id_, "");
+
     pnh_.param("voxelSize", alignToolConfig_.VoxelSize, alignToolConfig_.VoxelSize);
       ROS_INFO_STREAM_NAMED(node_name, "voxelSize set to " << alignToolConfig_.VoxelSize);
 
@@ -167,9 +168,9 @@ namespace Multi_Sensor_Alignment
     {
       service4_ = pnh_.advertiseService("revert", &Cloud_Alignment::revert_callback, this);
       service5_ = pnh_.advertiseService("reset", &Cloud_Alignment::reset_callback, this);
-      service6_ = pnh_.advertiseService("push_transform", &Cloud_Alignment::pushtransform_callback, this);
-      service7_ = pnh_.advertiseService("push_yaw", &Cloud_Alignment::pushYaw_callback, this);
-      service8_ = pnh_.advertiseService("push_roll_pitch_correction", &Cloud_Alignment::pushRollPitchCorrection_callback, this);
+    } 
+    else {
+      ROS_WARN_STREAM_NAMED(node_name, "ICP_ALIGN_TOOL did not find the alignment publisher.");
     }
 
   // Reset the guess transform for good measure
@@ -231,77 +232,12 @@ namespace Multi_Sensor_Alignment
     alignPubDesc_ = description;
     received_alignPubDesc_ = true;
   }
-
-  bool Cloud_Alignment::pushTransform()
-  {
-    if(!received_alignPubConfig_)
-    {
-      // ROS_WARN_STREAM_NAMED(node_name, "Alignment Server isn't connected.");
-      ROS_INFO_STREAM_NAMED(node_name, "Alignment Server isn't connected.");
-      return true;
-    }
-
-    alignPubConfig_.x = output_->transform.translation.x;
-    alignPubConfig_.y = output_->transform.translation.y;
-    alignPubConfig_.z = output_->transform.translation.z;
-
-    tf2::Quaternion q;
-    convert(output_->transform.rotation, q);
-    tf2::Matrix3x3 m(q);
-    double roll,pitch,yaw;
-    m.getRPY(roll,pitch,yaw);
-
-    alignPubConfig_.roll = roll;
-    alignPubConfig_.pitch = pitch;
-    alignPubConfig_.yaw = yaw;
-
-    return alignClient_->setConfiguration(alignPubConfig_);
-  }
-  
-  bool Cloud_Alignment::pushYaw()
-  {
-    if(!received_alignPubConfig_)
-    {
-      // ROS_WARN_STREAM_NAMED(node_name, "Alignment Server isn't connected.");
-      ROS_INFO_STREAM_NAMED(node_name, "Alignment Server isn't connected.");
-      return true;
-    }
-
-    tf2::Quaternion q;
-    convert(output_->transform.rotation, q);
-    tf2::Matrix3x3 m(q);
-    double roll,pitch,yaw;
-    m.getRPY(roll,pitch,yaw);
-
-    alignPubConfig_.yaw = yaw;
-
-    return alignClient_->setConfiguration(alignPubConfig_);
-  }
-  
-  bool Cloud_Alignment::pushRollPitchCorrection()
-  {
-    if(!received_alignPubConfig_)
-    {
-      // ROS_WARN_STREAM_NAMED(node_name, "Alignment Server isn't connected.");
-      ROS_INFO_STREAM_NAMED(node_name, "Alignment Server isn't connected.");
-      return true;
-    }
-
-    tf2::Quaternion q;
-    convert(output_->transform.rotation, q);
-    tf2::Matrix3x3 m(q);
-    double roll,pitch,yaw;
-    m.getRPY(roll,pitch,yaw);
-
-    alignPubConfig_.roll -= (roll / 2);
-    alignPubConfig_.pitch -= (pitch / 2);
-
-    return alignClient_->setConfiguration(alignPubConfig_);
-  }
   
   void Cloud_Alignment::publish_callback(const ros::TimerEvent& event)
   {
     ROS_INFO_STREAM_NAMED(node_name, "---");
+    ROS_DEBUG_STREAM("  cloud0 size= "; cloud0_.data.size());
+    ROS_DEBUG_STREAM("  cloud1 size= "; cloud1_.data.size());
 
     if(cloud0_.data.size() <= 0 || cloud1_.data.size() <=0) return;
 
@@ -548,8 +484,8 @@ namespace Multi_Sensor_Alignment
       current_guess_ = eigenTransform.matrix().cast<float>();
     }
 
-  // Transforming filtered or unfiltered, input cloud using found transform.
-     if(is_output_filtered_)
+    // Transforming filtered or unfiltered, input cloud using found transform.
+    if(is_output_filtered_)
     {
       pcl::copyPointCloud (*filtered_cloud0, *output_cloud0);
       pcl::copyPointCloud (*filtered_cloud1, *output_cloud1);
@@ -590,9 +526,7 @@ namespace Multi_Sensor_Alignment
       ROS_INFO_STREAM_NAMED(node_name, "input1 frozen");
     }
 
-    ROS_INFO_STREAM_NAMED(node_name, "X:     " << output_->transform.translation.x << " m" << ", diff: " << diff_x << " m");
-    ROS_INFO_STREAM_NAMED(node_name, "Y:     " << output_->transform.translation.y << " m" << ", diff: " << diff_y << " m");
-    ROS_INFO_STREAM_NAMED(node_name, "Z:     " << output_->transform.translation.z << " m" << ", diff: " << diff_z << " m");
+    double roll,pitch,yaw;
 
     tf2::Quaternion q(
           output_->transform.rotation.x,
@@ -600,8 +534,12 @@ namespace Multi_Sensor_Alignment
           output_->transform.rotation.z,
           output_->transform.rotation.w);
     tf2::Matrix3x3 m(q);
-    double roll,pitch,yaw;
     m.getRPY(roll,pitch,yaw);
+
+    ROS_INFO_STREAM_NAMED(node_name, "ICP Translation X: " << output_->transform.translation.x << " m" << ", diff: " << diff_x << " m");
+    ROS_INFO_STREAM_NAMED(node_name, "ICP Translation Y: " << output_->transform.translation.y << " m" << ", diff: " << diff_y << " m");
+    ROS_INFO_STREAM_NAMED(node_name, "ICP Translation Z: " << output_->transform.translation.z << " m" << ", diff: " << diff_z << " m");
+
     ROS_INFO_STREAM_NAMED(node_name, "Roll:  " << roll <<  " rad, " << (roll/PI*180)  << " deg" << ", diff: " << diff_roll << " rad");
     ROS_INFO_STREAM_NAMED(node_name, "pitch: " << pitch << " rad, " << (pitch/PI*180) << " deg" << ", diff: " << diff_pitch << " rad");
     ROS_INFO_STREAM_NAMED(node_name, "Yaw:   " << yaw <<   " rad, " << (yaw/PI*180)   << " deg" << ", diff: " << diff_yaw << " rad");
@@ -646,7 +584,12 @@ namespace Multi_Sensor_Alignment
         tf2::doTransform(*msg, cloud_out, transform);
 
         cloud0_ = cloud_out;
+        
+        if(freeze1_) 
+        {
+          cloud0_.header = cloud1_.header;
         }
+      }
       catch (tf2::TransformException ex){
         ROS_WARN("%s",ex.what());
         return;
@@ -657,6 +600,8 @@ namespace Multi_Sensor_Alignment
 
   void Cloud_Alignment::input1_callback(const sensor_msgs::PointCloud2::ConstPtr& msg)
   {
+    stamp_ = msg->header.stamp;
+
     if(freeze1_) 
     {
       return;
@@ -673,6 +618,11 @@ namespace Multi_Sensor_Alignment
         tf2::doTransform(*msg, cloud_out, transform);
 
         cloud1_ = cloud_out;
+
+        if(freeze0_) 
+        {
+          cloud1_.header = cloud0_.header;
+        }
       }
       catch (tf2::TransformException ex){
         ROS_WARN("%s",ex.what());
@@ -756,25 +706,6 @@ namespace Multi_Sensor_Alignment
   {
     return Cloud_Alignment::reset();
   }
-
-  bool Cloud_Alignment::pushtransform_callback(std_srvs::Empty::Request &req,
-            std_srvs::Empty::Response &resp)
-  {
-    return Cloud_Alignment::pushTransform();
-  }
-  
-  bool Cloud_Alignment::pushYaw_callback(std_srvs::Empty::Request &req,
-            std_srvs::Empty::Response &resp)
-  {
-    return Cloud_Alignment::pushYaw();
-  }
-  
-  bool Cloud_Alignment::pushRollPitchCorrection_callback(std_srvs::Empty::Request &req,
-            std_srvs::Empty::Response &resp)
-  {
-    return Cloud_Alignment::pushRollPitchCorrection();
-  }
-  
 
   void Cloud_Alignment::DownsampleCloud(const pcl::PointCloud<PointT>::Ptr in_cloud,
                                                 pcl::PointCloud<PointT> &out_cloud,
