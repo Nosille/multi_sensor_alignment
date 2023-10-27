@@ -10,6 +10,7 @@ namespace Multi_Sensor_Alignment
     ROS_INFO_STREAM_NAMED(node_name, "parent_frame set to " << parent_frame_id_);
     ROS_INFO_STREAM_NAMED(node_name, "child_frame set to " << child_frame_id_);
 
+    // ROS services
     service6_ = pnh_.advertiseService("push_transform", &Cloud_Alignment_Double::pushtransform_callback, this);
   }
 

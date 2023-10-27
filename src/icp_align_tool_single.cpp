@@ -7,12 +7,16 @@ namespace Multi_Sensor_Alignment
                       const ros::NodeHandle &private_node_handle, int buffer_size) 
   : Cloud_Alignment(node_handle, private_node_handle, buffer_size)
   {
+    pnh_.param<std::string>("base_link_frame", base_link_frame_id_, "");
+
+    pnh_.param<std::string>("fixed_frame", fixed_frame_id_, "");
+
     fixed_sensor_frame_id_ = parent_frame_id_ + "_fixed";
     child_frame_id_ = parent_frame_id_;
 
     initSensorFixedFrame();
 
-    if (child_frame_id_ != parent_frame_id_ && fixed_frame_id_ != ""){
+    if (fixed_frame_id_ != ""){
       original_parent_frame_id_ = parent_frame_id_;
       parent_frame_id_ = fixed_sensor_frame_id_;
       child_frame_id_ = fixed_sensor_frame_id_;
@@ -24,17 +28,13 @@ namespace Multi_Sensor_Alignment
       exit;
     }
 
-    pnh_.param<std::string>("base_link_frame", base_link_frame_id_, "");
-
-    pnh_.param<std::string>("fixed_frame", fixed_frame_id_, "");
-    fixed_sensor_frame_id_ = "";
-
     ROS_INFO_STREAM_NAMED(node_name, "fixed_frame set to " << fixed_frame_id_);
     ROS_INFO_STREAM_NAMED(node_name, "fixed_sensor_frame set to " << fixed_sensor_frame_id_);
     ROS_INFO_STREAM_NAMED(node_name, "base_link_frame set to " << base_link_frame_id_);
     ROS_INFO_STREAM_NAMED(node_name, "parent_frame set to " << parent_frame_id_);
     ROS_INFO_STREAM_NAMED(node_name, "child_frame set to " << child_frame_id_);
 
+    //ROS services
     service7_ = pnh_.advertiseService("push_yaw", &Cloud_Alignment_Single::pushYaw_callback, this);
     service8_ = pnh_.advertiseService("push_roll_pitch_correction", &Cloud_Alignment_Single::pushRollPitchCorrection_callback, this);
   }
@@ -61,7 +61,7 @@ namespace Multi_Sensor_Alignment
     sensorFixedFrameTransform_.transform.rotation.w = 1;
 
     // If base_link_frame is provided, we should use it's orientation instead
-    if (base_link_frame_id_ != "") {
+    if (base_link_frame_id_ != "" && fixed_frame_id_ != "") {
       baseLinkOrientationTransform = tfBuffer_.lookupTransform(fixed_frame_id_, base_link_frame_id_, ros::Time(0));
 
       sensorFixedFrameTransform_.transform.rotation = baseLinkOrientationTransform.transform.rotation;
